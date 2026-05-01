@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.2] – 2026-05-01
+
+### Fixed
+
+- **Wrapper-only flags placed after `--` were silently forwarded to
+  openconnect (#19)** — `openconnect-saml connect work --reconnect --
+  --no-cert-check` looked like it should disable cert verification
+  for the wrapper, but the `--` made argparse stop and the flag ended
+  up appended to openconnect's argv (where it doesn't exist). The
+  wrapper-side TLS verify still fired and the user saw
+  `CERTIFICATE_VERIFY_FAILED`. We now hoist `--no-cert-check`,
+  `--ssl-legacy`, `--reconnect`, `--background`, `--allowed-hosts`,
+  `--on-error`, and `--wait` back onto the wrapper when they appear
+  in the openconnect-args list, with a stderr warning explaining
+  the corrected placement. Genuinely-openconnect flags
+  (`--no-dtls`, `--script`, ...) are unchanged.
+- **`requests.exceptions.SSLError` in the SAML phase now logs a
+  helpful hint** pointing at `--no-cert-check` instead of letting
+  the bare TLS traceback bubble up. The cert hash is still pinned
+  via openconnect's `--servercert`, so the bypass only affects the
+  requests-side handshake.
+
+### Tests
+
+- **+38 unit tests across 8 modules** (Copilot coverage analysis,
+  PR #25): `version`, `saml_authenticator`, `completion`,
+  `encrypted_backup`, `sessions`, `version_check`, `profile`, and
+  `notify` are now at 100% line coverage. Overall coverage 59.5%
+  → 61.1%; suite is at 750 tests (was 709).
+
 ## [0.22.1] – 2026-04-30
 
 ### Fixed
