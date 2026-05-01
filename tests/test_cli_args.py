@@ -132,6 +132,68 @@ class TestDetachFlag:
         )
         _recover_connect_options_from_remainder(args)
         assert args.detach is True
+
+    def test_no_cert_check_after_dash_dash_is_hoisted(self, capsys):
+        """`connect work -- --no-cert-check` shouldn't silently forward
+        a wrapper-only flag to openconnect. Hoist + warn (issue #19).
+        """
+        from types import SimpleNamespace
+
+        from openconnect_saml.cli import _recover_connect_options_from_remainder
+
+        args = SimpleNamespace(
+            openconnect_args=["--no-cert-check"],
+            no_cert_check=False,
+            ssl_legacy=False,
+            reconnect=False,
+            detach=False,
+            browser=None,
+            headless=False,
+        )
+        _recover_connect_options_from_remainder(args)
+        assert args.no_cert_check is True
+        assert "--no-cert-check" not in args.openconnect_args
+        warn = capsys.readouterr().err
+        assert "wrapper-only" in warn
+        assert "--no-cert-check" in warn
+
+    def test_value_flag_after_dash_dash_is_hoisted(self):
+        """``--allowed-hosts foo`` after ``--`` is hoisted with its value."""
+        from types import SimpleNamespace
+
+        from openconnect_saml.cli import _recover_connect_options_from_remainder
+
+        args = SimpleNamespace(
+            openconnect_args=["--allowed-hosts", "*.example.com"],
+            no_cert_check=False,
+            ssl_legacy=False,
+            reconnect=False,
+            allowed_hosts=None,
+            detach=False,
+            browser=None,
+            headless=False,
+        )
+        _recover_connect_options_from_remainder(args)
+        assert args.allowed_hosts == "*.example.com"
+        assert args.openconnect_args == []
+
+    def test_unknown_flag_still_passes_to_openconnect(self):
+        """Genuinely-openconnect flags after ``--`` are not hoisted."""
+        from types import SimpleNamespace
+
+        from openconnect_saml.cli import _recover_connect_options_from_remainder
+
+        args = SimpleNamespace(
+            openconnect_args=["--no-dtls", "--script", "/etc/vpnc/script"],
+            no_cert_check=False,
+            ssl_legacy=False,
+            reconnect=False,
+            detach=False,
+            browser=None,
+            headless=False,
+        )
+        _recover_connect_options_from_remainder(args)
+        assert args.openconnect_args == ["--no-dtls", "--script", "/etc/vpnc/script"]
         assert "--detach" not in args.openconnect_args
 
 

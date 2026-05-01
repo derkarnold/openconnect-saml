@@ -810,14 +810,38 @@ def create_service_argparser():
 def _recover_connect_options_from_remainder(args):
     """Recover openconnect-saml options swallowed after `connect PROFILE`.
 
-    argparse.REMAINDER is kept for backwards-compatible openconnect passthrough,
-    but it also captures options placed after the profile name.  This makes
-    `openconnect-saml connect work --browser chrome` silently use Qt (#21).
-    Pull known local options back out and leave the rest for openconnect.
+    With the v0.22.1 switch from ``argparse.REMAINDER`` to ``parse_known_args``,
+    most known flags placed *after* the profile name are now claimed by argparse
+    directly. This function still runs to:
+
+    1. Cover legacy callers that build ``args.openconnect_args`` manually.
+    2. Hoist wrapper-only flags that the user mistakenly placed after a
+       ``--`` separator (e.g. ``connect work -- --no-cert-check`` — the
+       ``--`` tells argparse to stop parsing, so ``--no-cert-check`` ends
+       up forwarded to ``openconnect`` instead of activating wrapper-side
+       TLS bypass). When we recognise such a flag, we hoist it back onto
+       ``args`` and emit a warning so the user knows their command line
+       wasn't doing what they thought.
     """
     remainder = list(getattr(args, "openconnect_args", []) or [])
     if not remainder:
         return
+
+    # Wrapper-only flags that don't exist in openconnect's own argv vocabulary.
+    # Putting them after ``--`` is almost always a user mistake — they expected
+    # the wrapper to act on them but the ``--`` makes argparse skip past.
+    bool_flags = {
+        "--no-cert-check": "no_cert_check",
+        "--ssl-legacy": "ssl_legacy",
+        "--reconnect": "reconnect",
+        "--background": "detach",
+    }
+    value_flags = {
+        "--allowed-hosts": "allowed_hosts",
+        "--on-error": "on_error",
+        "--wait": "wait",
+    }
+    hoisted: list[str] = []
 
     cleaned = []
     i = 0
@@ -850,9 +874,34 @@ def _recover_connect_options_from_remainder(args):
             args.detach = True
             i += 1
             continue
+        if token in bool_flags:
+            setattr(args, bool_flags[token], True)
+            hoisted.append(token)
+            i += 1
+            continue
+        if token in value_flags and i + 1 < len(remainder):
+            setattr(args, value_flags[token], remainder[i + 1])
+            hoisted.append(f"{token} {remainder[i + 1]}")
+            i += 2
+            continue
+        eq = token.split("=", 1)
+        if len(eq) == 2 and eq[0] in value_flags:
+            setattr(args, value_flags[eq[0]], eq[1])
+            hoisted.append(token)
+            i += 1
+            continue
         cleaned.append(token)
         i += 1
     args.openconnect_args = cleaned
+    if hoisted:
+        sys.stderr.write(
+            "Warning: the following flag(s) appeared after `--` and were\n"
+            "treated as openconnect arguments. They are wrapper-only flags;\n"
+            "moved them back onto openconnect-saml. Place them BEFORE the\n"
+            "`--` separator next time:\n"
+        )
+        for h in hoisted:
+            sys.stderr.write(f"  {h}\n")
 
 
 def _handle_profiles_command(args):

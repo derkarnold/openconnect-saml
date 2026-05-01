@@ -12,7 +12,7 @@ from pathlib import Path
 import structlog
 from prompt_toolkit import HTML
 from prompt_toolkit.shortcuts import radiolist_dialog
-from requests.exceptions import HTTPError
+from requests.exceptions import HTTPError, SSLError
 
 from openconnect_saml import config
 from openconnect_saml.authenticator import (
@@ -71,6 +71,20 @@ def run(args):
             "does this endpoint do SSO?), exiting"
         )
         return _bail(3)
+    except SSLError as exc:
+        # Most users hit this with self-signed corporate gateways. Point
+        # them at the wrapper-only flag rather than letting the bare
+        # SSLError trail off into "unable to get local issuer certificate".
+        logger.error(
+            "TLS verification failed against the gateway during the SAML "
+            "auth phase. If the gateway uses a self-signed or "
+            "internal-CA certificate, retry with `--no-cert-check` "
+            "(BEFORE any `--` separator). The cert hash is still pinned "
+            "via openconnect's `--servercert` so the bypass only affects "
+            "the requests-side SAML handshake.",
+            error=str(exc),
+        )
+        return _bail(4)
     except HTTPError as exc:
         logger.error(f"Request error: {exc}")
         return _bail(4)
