@@ -1382,8 +1382,8 @@ def _force_utf8_streams() -> None:
     """On Windows the default console codepage (cp1252) can't encode
     Unicode glyphs we use freely in CLI output (``→``, ``✓``, ``✗``, …).
     Reconfigure stdout/stderr to UTF-8 with an error-replace fallback so
-    a stray glyph never crashes the whole command. No-op on POSIX where
-    UTF-8 is already the default.
+    a stray glyph never crashes the whole command. No-op on non-Windows
+    platforms.
     """
     import contextlib
 
