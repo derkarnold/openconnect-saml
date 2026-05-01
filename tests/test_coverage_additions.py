@@ -448,6 +448,10 @@ class TestSessionsExtras:
         assert sessions.kill("ghost", timeout=0.1) is False
         assert not sessions.session_file("ghost").exists()
 
+    @pytest.mark.skipif(
+        not hasattr(__import__("signal"), "SIGKILL"),
+        reason="SIGKILL is POSIX-only; Windows SIGTERM is already TerminateProcess",
+    )
     def test_kill_escalates_to_sigkill_when_term_ignored(self, monkeypatch):
         """If SIGTERM doesn't kill the process within the timeout, kill()
         sends SIGKILL and removes the record."""

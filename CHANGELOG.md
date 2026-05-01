@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.3] – 2026-05-01
+
+### Fixed
+
+- **`sessions.kill()` crashed on Windows when the SIGTERM grace period
+  expired** — the escalation step did `os.kill(pid, signal.SIGKILL)`,
+  but `signal.SIGKILL` doesn't exist on Windows (`AttributeError:
+  module 'signal' has no attribute 'SIGKILL'`). The function now uses
+  `getattr(signal, "SIGKILL", None)` and skips the escalation on
+  platforms without it. On Windows `os.kill(pid, SIGTERM)` already
+  invokes `TerminateProcess`, so the missing escalation is a no-op
+  rather than a regression.
+- **Windows CI gate (`Tests (gate) / test (windows-latest, 3.12)`)
+  no longer fails** — the new coverage test
+  `test_kill_escalates_to_sigkill_when_term_ignored` (added in
+  v0.22.2 from PR #25) referenced `signal.SIGKILL` directly, which
+  blew up at the point where the test was supposed to assert on the
+  escalation. Now `@pytest.mark.skipif(not hasattr(signal, "SIGKILL"))`
+  so it runs on POSIX and skips cleanly on Windows.
+
+### Notes
+
+- v0.22.2 was tagged but never reached PyPI / AUR — the new release
+  gate added in v0.22.2 caught the Windows failure and held back
+  every downstream job (`build`, `publish`, `Create GitHub Release`,
+  `Trigger AUR update` all `skipped`). v0.22.3 is what actually
+  ships the v0.22.2 changes (issue-#19 follow-up + the Copilot
+  coverage tests) plus this Windows fix.
+
 ## [0.22.2] – 2026-05-01
 
 ### Fixed

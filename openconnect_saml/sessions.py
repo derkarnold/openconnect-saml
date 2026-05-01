@@ -171,9 +171,15 @@ def kill(profile: str, *, timeout: float = 10.0) -> bool:
         time.sleep(0.1)
 
     if _pid_alive(sess.pid):
-        # Still alive — escalate to SIGKILL
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.kill(sess.pid, signal.SIGKILL)
+        # Still alive — escalate to SIGKILL on POSIX. On Windows ``signal``
+        # has no ``SIGKILL`` and ``os.kill(pid, SIGTERM)`` is already an
+        # unconditional ``TerminateProcess``, so the escalation step is a
+        # no-op there. We just skip it instead of crashing on the missing
+        # attribute.
+        sigkill = getattr(signal, "SIGKILL", None)
+        if sigkill is not None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.kill(sess.pid, sigkill)
 
     remove(profile)
     return True
