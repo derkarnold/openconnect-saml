@@ -15,7 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`profiles add`, `config validate`, etc.). A bare `print(...)`
   containing one of those crashed the whole command on a Windows
   console. The CLI entry point now reconfigures stdout/stderr to
-  UTF-8 with `errors="replace"` on Windows. POSIX is untouched.
+  UTF-8 with `errors="replace"` on Windows.
+- **`getpass.getpass` blocked on Windows when stdin was piped** —
+  on Windows `getpass.getpass` reads from the console handle
+  (``msvcrt.getwch``), not from `sys.stdin`. Subprocess-driven runs
+  (CI, scripts, ``run`` mode) that supply a password via stdin
+  blocked forever waiting for console input. New `_read_password()`
+  helper in app.py uses `sys.stdin.readline` when stdin isn't a
+  TTY and `getpass` otherwise.
 - **`_pid_alive` raised `OSError [WinError 87]` for stale PIDs** —
   on Windows `os.kill(missing_pid, 0)` raises a generic `OSError`
   instead of `ProcessLookupError`. We now catch the bare `OSError`
@@ -28,15 +35,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the escalation on platforms without it. Windows' `SIGTERM` is
   already an unconditional `TerminateProcess`, so skipping the
   escalation matches existing runtime behaviour.
-- **`tests/test_coverage_additions.py::TestSessionsExtras::
-  test_kill_escalates_to_sigkill_when_term_ignored`** carries
-  `@pytest.mark.skipif(not hasattr(signal, "SIGKILL"))` so it runs
-  on POSIX and skips cleanly on Windows.
+  `tests/test_coverage_additions.py` carries
+  `@pytest.mark.skipif(not hasattr(signal, "SIGKILL"))` for the
+  matching test.
+- **`profiles add` wizard prompted in subprocess-driven test runs** —
+  `is_interactive = sys.stdin.isatty()` returned `True` on Windows
+  even for an inherited `subprocess.DEVNULL` / nul stdin, so the
+  wizard fired and EOF'd. Tightened to
+  `sys.stdin.isatty() and sys.stdout.isatty()`: scripted callers
+  always capture stdout (so isatty=False) and real users at a
+  terminal don't.
 - **`cryptography` is now an explicit `[dev]` extra** — the encrypted
   backup tests and the integration mock gateway both lazy-import
   `cryptography`. On most Linux setups it arrives transitively via
   other deps, but on Windows the dep tree didn't pull it in, so
   ~12 tests failed with `ModuleNotFoundError`. Now declared.
+
+### CI
+
+- **Windows job (`test (windows-latest, 3.12)`) now also routes
+  pytest output through `tee pytest-output.txt` with
+  `set -o pipefail`** and sets `PYTHONIOENCODING=utf-8`. Without
+  that the cp1252 default codepage tripped pytest/coverage during
+  the terminal report on Windows runners. Linux/macOS jobs are
+  unaffected.
 
 ### Notes
 
