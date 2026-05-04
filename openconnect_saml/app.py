@@ -677,6 +677,13 @@ async def _run(args, cfg):
     if allowed_hosts_raw:
         allowed_hosts = [h.strip() for h in allowed_hosts_raw.split(",") if h.strip()]
 
+    # Resolve auth_script: CLI > profile > None (use auto-auth)
+    auth_script = getattr(args, "auth_script", None)
+    if auth_script is None and selected_profile is not None:
+        auth_script = (
+            selected_profile.auth_script if hasattr(selected_profile, "auth_script") else None
+        )
+
     auth_response = await authenticate_to(
         selected_profile,
         args.proxy,
@@ -689,6 +696,7 @@ async def _run(args, cfg):
         window_height=cfg.window_height,
         verify_tls=not no_cert_check,
         allowed_hosts=allowed_hosts,
+        auth_script=auth_script,
     )
 
     if credentials:
@@ -740,6 +748,7 @@ def authenticate_to(
     window_height=600,
     verify_tls=True,
     allowed_hosts=None,
+    auth_script=None,
 ):
     logger.info("Authenticating to VPN endpoint", name=host.name, address=host.address)
     return Authenticator(
@@ -753,6 +762,7 @@ def authenticate_to(
         window_height=window_height,
         verify_tls=verify_tls,
         allowed_hosts=allowed_hosts,
+        auth_script=auth_script,
     ).authenticate(display_mode)
 
 

@@ -14,3 +14,5 @@ htmlcov/
 *.so
 .uv/
 uv.lock
+.env
+.plans/
