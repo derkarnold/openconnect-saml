@@ -35,6 +35,41 @@ DEFAULT_CALLBACK_PORT = 29786
 DEFAULT_CALLBACK_TIMEOUT = 300
 
 
+# Hosts that handle authentication for Microsoft Entra ID / Azure AD /
+# Microsoft 365 SSO. The login flow is JavaScript-heavy (Conditional
+# Access, FIDO2, push, hash-based redirects) and the pure ``requests``
+# scripted path can't drive it reliably. Detect these hosts up-front so
+# we can give a clearer error than "Max authentication steps exceeded".
+_ENTRA_HOSTS = (
+    "login.microsoftonline.com",
+    "login.microsoftonline.us",
+    "login.microsoftonline.de",
+    "login.partner.microsoftonline.cn",
+    "login.live.com",
+    "login.windows.net",
+)
+
+
+def _is_ms_entra_idp(login_url: str) -> bool:
+    try:
+        host = (urlparse(login_url).hostname or "").lower()
+    except (ValueError, AttributeError):
+        return False
+    return any(host == h or host.endswith("." + h) for h in _ENTRA_HOSTS)
+
+
+_ENTRA_HEADLESS_HINT = (
+    "Microsoft Entra ID / Azure AD detected as the IdP. The pure-HTTP "
+    "headless backend can't drive its JavaScript-based login flow.\n"
+    "Use ``--browser chrome`` instead — Playwright runs Chromium "
+    "headless under the hood (no DISPLAY required, works on remote "
+    "servers and inside containers).\n\n"
+    "  pip install 'openconnect-saml[chrome]'\n"
+    "  playwright install chromium\n"
+    "  openconnect-saml connect <profile> --browser chrome\n"
+)
+
+
 class HeadlessAuthError(Exception):
     """Raised when headless authentication fails."""
 
@@ -141,14 +176,46 @@ class HeadlessAuthenticator:
     async def authenticate(self, auth_request_response):
         """Attempt headless authentication and return the SSO token.
 
-        First tries automatic form-based auth. If that fails,
-        falls back to the callback server approach.
+        Strategy:
+
+        1. If we recognise the IdP as Microsoft Entra ID / Azure AD,
+           try the ``_auto_authenticate_entra`` scripted flow first.
+           That speaks Microsoft's specific multi-step login protocol
+           (GetCredentialType → password → MFA → KMSI → SAML form) and
+           works for tenants that allow username + password + TOTP.
+        2. Otherwise (or if Entra returns something unexpected), fall
+           back to the generic ``_auto_authenticate`` form scraper.
+        3. If both fail and we're on Entra, error out with a hint to
+           use ``--browser chrome`` (Chromium runs headless, no
+           DISPLAY required) — that handles FIDO2 / push / conditional
+           access tenants the scripted path can't reach.
+        4. Otherwise, fall through to the localhost-callback server
+           (which prints a URL the user opens in a browser).
         """
         login_url = str(auth_request_response.login_url)
         login_final_url = str(auth_request_response.login_final_url)
         token_cookie_name = str(auth_request_response.token_cookie_name)
 
+        is_entra = _is_ms_entra_idp(login_url)
+
         if self.credentials and self.credentials.username:
+            if is_entra:
+                logger.info("Attempting scripted Microsoft Entra ID login")
+                try:
+                    token = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        self._auto_authenticate_entra,
+                        login_url,
+                        login_final_url,
+                        token_cookie_name,
+                    )
+                    if token:
+                        return token
+                except HeadlessAuthError as exc:
+                    raise HeadlessAuthError(_ENTRA_HEADLESS_HINT) from exc
+                except Exception as exc:
+                    raise HeadlessAuthError(_ENTRA_HEADLESS_HINT) from exc
+
             logger.info("Attempting automatic headless authentication")
             try:
                 token = await asyncio.get_event_loop().run_in_executor(
@@ -161,11 +228,15 @@ class HeadlessAuthenticator:
                 if token:
                     return token
             except HeadlessAuthError as exc:
+                if is_entra:
+                    raise HeadlessAuthError(_ENTRA_HEADLESS_HINT) from exc
                 logger.warning(
                     "Automatic headless auth failed, falling back to callback server",
                     error=str(exc),
                 )
             except Exception as exc:
+                if is_entra:
+                    raise HeadlessAuthError(_ENTRA_HEADLESS_HINT) from exc
                 logger.warning(
                     "Automatic headless auth failed unexpectedly, falling back to callback server",
                     error=str(exc),
@@ -295,6 +366,296 @@ class HeadlessAuthenticator:
             resp.raise_for_status()
 
         raise HeadlessAuthError("Max authentication steps exceeded")
+
+    # -- Microsoft Entra ID / Azure AD / Microsoft 365 --------------------
+    #
+    # Microsoft's login UX is JS-driven, so the generic form scraper
+    # ``_auto_authenticate`` can't follow it. The flow is well-documented
+    # though: the initial HTML embeds a ``$Config`` JSON object that lists
+    # the POST URL and CSRF/state tokens, and there's a small set of
+    # endpoints we need to hit in order:
+    #
+    #   1. POST /common/GetCredentialType — username probe; tells us if
+    #      the tenant is federated (redirect us to ADFS) or pure-cloud.
+    #   2. POST $Config.urlPost — username + password.
+    #   3. SAS / OneWaySMS / TOTP — MFA challenge if required, with the
+    #      OTP from ``self.credentials.totp``.
+    #   4. KMSI ("Stay signed in?") — auto-decline.
+    #   5. The final response carries a ``<form action=ACS_URL>`` whose
+    #      ``SAMLResponse`` field is the assertion the gateway expects;
+    #      we POST it.
+    #
+    # This is what the user sees as the "I want everything in the console"
+    # flow on issue #19. It's best-effort — Microsoft routinely changes
+    # field names, MFA options, and conditional-access gates we can't
+    # script (FIDO2, push, certificate auth). When something doesn't
+    # match, we raise ``HeadlessAuthError`` so ``authenticate()`` can
+    # surface the ``--browser chrome`` hint.
+    def _auto_authenticate_entra(self, login_url, login_final_url, token_cookie_name):
+        from lxml import html as lxml_html
+
+        # Auto-extend the whitelist with login_url / login_final_url /
+        # the Entra hosts the flow will redirect through.
+        if self.allowed_hosts is not None:
+            for url in (login_url, login_final_url):
+                host = urlparse(url).hostname
+                if host and host.lower() not in (h.lower() for h in self.allowed_hosts):
+                    self.allowed_hosts.append(host)
+            for h in _ENTRA_HOSTS:
+                if h not in (e.lower() for e in self.allowed_hosts):
+                    self.allowed_hosts.append(h)
+
+        username = self.credentials.username
+        password = self.credentials.password
+        if not username or not password:
+            raise HeadlessAuthError(
+                "Scripted Entra login needs both username AND password "
+                "available before connect (no interactive prompt in "
+                "this path)."
+            )
+        totp = self.credentials.totp  # may be None — only required if MFA
+
+        # 1. Initial GET — extract $Config{urlPost, sCtx, sFT, canary, ...}
+        resp = self.session.get(login_url, timeout=self.timeout, allow_redirects=True)
+        resp.raise_for_status()
+        if not self._host_allowed(resp.url):
+            raise HeadlessAuthError(
+                f"Refusing to follow redirect to {urlparse(resp.url).hostname!r}"
+            )
+        cfg = self._parse_entra_config(resp.text)
+
+        # 2. Probe credential type. If federated, the response carries a
+        # ``FederationRedirectUrl`` we'd need to follow to ADFS / WS-Trust.
+        # That branch isn't supported here yet; surface a clear error.
+        gct_url = urljoin(resp.url, "/common/GetCredentialType")
+        gct_payload = {
+            "username": username,
+            "isOtherIdpSupported": True,
+            "checkPhones": False,
+            "isRemoteNGCSupported": True,
+            "isCookieBannerShown": False,
+            "isFidoSupported": True,
+            "originalRequest": cfg.get("sCtx", ""),
+            "country": cfg.get("country", ""),
+            "forceotclogin": False,
+            "isExternalFederationDisallowed": False,
+            "isRemoteConnectSupported": False,
+            "federationFlags": 0,
+            "isSignup": False,
+            "flowToken": cfg.get("sFT", ""),
+        }
+        gct_resp = self.session.post(
+            gct_url,
+            json=gct_payload,
+            headers={"canary": cfg.get("canary", "")},
+            timeout=self.timeout,
+        )
+        gct_resp.raise_for_status()
+        gct = gct_resp.json()
+        creds = gct.get("Credentials", {}) if isinstance(gct, dict) else {}
+        if creds.get("FederationRedirectUrl"):
+            raise HeadlessAuthError(
+                "Tenant is federated (uses ADFS / WS-Trust). The scripted "
+                "console-only path doesn't support that branch yet."
+            )
+        # ``HasPassword=False`` typically means passwordless / FIDO2 only.
+        if creds.get("HasPassword") is False:
+            raise HeadlessAuthError(
+                "Tenant doesn't accept username + password — likely passwordless / FIDO2 only."
+            )
+        flow_token = gct.get("FlowToken") or cfg.get("sFT", "")
+
+        # 3. POST username + password to urlPost.
+        url_post = cfg.get("urlPost") or urljoin(resp.url, "/common/login")
+        if not url_post.startswith("http"):
+            url_post = urljoin(resp.url, url_post)
+        login_payload = {
+            "i13": "0",
+            "login": username,
+            "loginfmt": username,
+            "type": "11",
+            "LoginOptions": "3",
+            "lrt": "",
+            "lrtPartition": "",
+            "hisRegion": "",
+            "hisScaleUnit": "",
+            "passwd": password,
+            "ps": "2",
+            "psRNGCDefaultType": "",
+            "psRNGCEntropy": "",
+            "psRNGCSLK": "",
+            "canary": cfg.get("canary", ""),
+            "ctx": cfg.get("sCtx", ""),
+            "hpgrequestid": cfg.get("sessionId", ""),
+            "flowToken": flow_token,
+            "PPSX": "",
+            "NewUser": "1",
+            "FoundMSAs": "",
+            "fspost": "0",
+            "i21": "0",
+            "CookieDisclosure": "0",
+            "IsFidoSupported": "1",
+            "isSignupPost": "0",
+            "i19": "1",
+        }
+        resp = self.session.post(
+            url_post,
+            data=login_payload,
+            timeout=self.timeout,
+            allow_redirects=True,
+        )
+        resp.raise_for_status()
+
+        # 4. Iterate: MFA / KMSI / SAML response form. Each step parses a
+        # new $Config from the response and submits the next form.
+        for step in range(8):
+            # Did we already get a SAMLResponse form back to the gateway?
+            doc = lxml_html.fromstring(resp.content, base_url=resp.url)
+            saml_token = self._submit_saml_response_form(doc, resp.url, token_cookie_name)
+            if saml_token:
+                return saml_token
+
+            # Wrong password? Microsoft signals via ``arrUserProofs`` /
+            # ``urlMsaSignUp`` / a string in the page; cheapest test is
+            # the page text.
+            page_text = resp.text
+            if (
+                "Your account or password is incorrect" in page_text
+                or "is not a valid email address" in page_text
+                or '"sErrorCode":"50126"' in page_text
+            ):
+                raise HeadlessAuthError(
+                    "Microsoft rejected the credentials (wrong username / password / locked out)."
+                )
+
+            cfg = self._parse_entra_config(page_text)
+            url_post = cfg.get("urlPost") or resp.url
+            if not url_post.startswith("http"):
+                url_post = urljoin(resp.url, url_post)
+            flow_token = cfg.get("sFT", flow_token)
+            ctx = cfg.get("sCtx", "")
+
+            # MFA — SAS endpoint expects an OTP code if we have one. The
+            # sequence is BeginAuth → EndAuth → ProcessAuth, but for TOTP
+            # the simplest working path is a direct POST to the same
+            # urlPost with type=22 + otc=<code>.
+            if totp and (
+                "/common/SAS/" in page_text
+                or "OneWaySMS" in page_text
+                or '"sPollingUrl"' in page_text
+                or '"sasPostUrl"' in page_text
+                or "idTxtBx_SAOTCC_OTC" in page_text
+            ):
+                otc_payload = {
+                    "type": "22",
+                    "request": ctx,
+                    "mfaAuthMethod": "PhoneAppOTP",
+                    "otc": str(totp),
+                    "login": username,
+                    "flowToken": flow_token,
+                    "hpgrequestid": cfg.get("sessionId", ""),
+                    "canary": cfg.get("canary", ""),
+                    "i19": "1",
+                }
+                resp = self.session.post(
+                    url_post,
+                    data=otc_payload,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                )
+                resp.raise_for_status()
+                continue
+
+            # KMSI — "Stay signed in?" page. Decline with LoginOptions=3.
+            if "Kmsi" in page_text or "Stay signed in" in page_text:
+                kmsi_payload = {
+                    "LoginOptions": "3",
+                    "type": "28",
+                    "ctx": ctx,
+                    "hpgrequestid": cfg.get("sessionId", ""),
+                    "flowToken": flow_token,
+                    "canary": cfg.get("canary", ""),
+                    "i2": "1",
+                    "i17": "",
+                    "i18": "",
+                    "i19": "1",
+                }
+                resp = self.session.post(
+                    url_post,
+                    data=kmsi_payload,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                )
+                resp.raise_for_status()
+                continue
+
+            # MFA challenge that we can't satisfy from CLI: FIDO2,
+            # phone-call, push notification, "More information required".
+            if "BeginAuth" in page_text and not totp:
+                raise HeadlessAuthError(
+                    "Tenant requires MFA but no TOTP secret is "
+                    "available. Enrol the account's authenticator app "
+                    "and pass the secret via keyring / `--totp-source`."
+                )
+            if (
+                "FIDO" in page_text
+                or "passkey" in page_text.lower()
+                or "phoneAppNotification" in page_text
+                or "ConvergedProofUpRedirect" in page_text
+            ):
+                raise HeadlessAuthError(
+                    "Tenant requires an interactive MFA method that "
+                    "can't be scripted from a console (FIDO2 key / "
+                    "phone push / 'More info required')."
+                )
+
+            raise HeadlessAuthError(
+                f"Unexpected page in Entra flow at step {step}: "
+                f"no SAMLResponse, no known challenge."
+            )
+
+        raise HeadlessAuthError("Entra flow exceeded its step budget without a SAMLResponse")
+
+    def _parse_entra_config(self, html_text):
+        """Pull the embedded ``$Config = {...}`` JSON out of an Entra
+        login page. Returns a dict with at least ``urlPost``, ``sCtx``,
+        ``sFT``, ``canary`` if the page is a real Entra login page.
+        Returns ``{}`` otherwise.
+        """
+        import json
+        import re
+
+        m = re.search(r"\$Config\s*=\s*(\{.+?\});", html_text, re.DOTALL)
+        if not m:
+            return {}
+        try:
+            return json.loads(m.group(1))
+        except (json.JSONDecodeError, ValueError):
+            return {}
+
+    def _submit_saml_response_form(self, doc, base_url, token_cookie_name):
+        """If ``doc`` carries a SAMLResponse auto-submit form, post it
+        to its action URL, then read the SSO cookie back. Returns the
+        token if found, ``None`` if no SAML form is present.
+        """
+        for form in doc.forms:
+            fields = dict(form.fields) if hasattr(form.fields, "items") else {}
+            if "SAMLResponse" not in fields:
+                continue
+            action = form.action
+            if action and not action.startswith("http"):
+                action = urljoin(base_url, action)
+            resp = self.session.post(
+                action,
+                data=fields,
+                timeout=self.timeout,
+                allow_redirects=True,
+            )
+            resp.raise_for_status()
+            return self._extract_token(resp, token_cookie_name) or self._check_cookies_for_token(
+                token_cookie_name
+            )
+        return None
 
     def _fill_form(self, form, form_data, doc):
         """Fill form fields with credentials. Returns True if anything was filled."""

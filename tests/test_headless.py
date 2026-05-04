@@ -469,3 +469,75 @@ class TestHeadlessModeIntegration:
             token = await auth._authenticate_in_browser(mock_request, HEADLESS_MODE)
             MockHeadless.assert_called_once()
             assert token == "test-token"
+
+
+class TestEntraDetection:
+    def test_login_microsoftonline_is_entra(self):
+        from openconnect_saml.headless import _is_ms_entra_idp
+
+        assert _is_ms_entra_idp("https://login.microsoftonline.com/common/oauth2/authorize")
+        assert _is_ms_entra_idp("https://login.microsoftonline.us/foo/saml2?id=1")
+        assert _is_ms_entra_idp("https://login.live.com/login.srf")
+
+    def test_unrelated_hosts_are_not_entra(self):
+        from openconnect_saml.headless import _is_ms_entra_idp
+
+        assert not _is_ms_entra_idp("https://idp.example.com/saml")
+        assert not _is_ms_entra_idp("https://accounts.google.com/o/oauth2/v2/auth")
+        assert not _is_ms_entra_idp("not-a-url")
+        assert not _is_ms_entra_idp("")
+
+
+class TestEntraConfigParser:
+    """The Entra login page embeds a ``$Config = {...};`` JSON block —
+    make sure we extract its ``urlPost`` / ``sCtx`` / ``sFT`` / ``canary``
+    fields when present and degrade cleanly when not.
+    """
+
+    def _make_authenticator(self):
+        from openconnect_saml.headless import HeadlessAuthenticator
+
+        return HeadlessAuthenticator()
+
+    def test_extracts_known_fields(self):
+        page = """
+        <html><head><script>//<![CDATA[
+            $Config = {"urlPost":"https://login.microsoftonline.com/common/login",
+                       "sCtx":"CtxToken123",
+                       "sFT":"FlowToken456",
+                       "canary":"CanaryValue",
+                       "sessionId":"session-789"};
+        //]]></script></head><body></body></html>
+        """
+        cfg = self._make_authenticator()._parse_entra_config(page)
+        assert cfg["urlPost"].endswith("/common/login")
+        assert cfg["sCtx"] == "CtxToken123"
+        assert cfg["sFT"] == "FlowToken456"
+        assert cfg["canary"] == "CanaryValue"
+        assert cfg["sessionId"] == "session-789"
+
+    def test_returns_empty_dict_when_no_config_block(self):
+        cfg = self._make_authenticator()._parse_entra_config("<html></html>")
+        assert cfg == {}
+
+    def test_returns_empty_dict_on_malformed_json(self):
+        cfg = self._make_authenticator()._parse_entra_config(
+            "<script>$Config = {not json at all};</script>"
+        )
+        assert cfg == {}
+
+
+class TestEntraRoutingHints:
+    """The user-facing message when scripted Entra auth fails should
+    point at ``--browser chrome``; the hint string is asserted to keep
+    that wording stable for users searching for it.
+    """
+
+    def test_hint_mentions_browser_chrome_and_install_steps(self):
+        from openconnect_saml.headless import _ENTRA_HEADLESS_HINT
+
+        assert "--browser chrome" in _ENTRA_HEADLESS_HINT
+        assert "playwright install chromium" in _ENTRA_HEADLESS_HINT
+        # And it should explicitly say no display is required, since
+        # that's the user's whole concern.
+        assert "DISPLAY" in _ENTRA_HEADLESS_HINT or "headless" in _ENTRA_HEADLESS_HINT

@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Console-only Microsoft Entra ID / Azure AD login (#19)** — when
+  the IdP is Entra (`login.microsoftonline.com` and friends) the
+  headless authenticator now drives Microsoft's multi-step login
+  protocol directly via HTTPS POSTs: `GetCredentialType` → password
+  → MFA / TOTP → KMSI ("Stay signed in?") → SAMLResponse. No browser
+  binary, no DISPLAY, no callback server. Works for tenants that
+  accept username + password + TOTP. Tenants that mandate FIDO2 /
+  phone-push / conditional-access surface a clear
+  `HeadlessAuthError` pointing at `--browser chrome` instead, since
+  those flows can't be scripted from a console.
+- **Friendlier `--browser chrome` startup error** when the Chromium
+  binary is missing (extras installed but `playwright install
+  chromium` was skipped).
+
 ## [0.22.3] – 2026-05-01
 
 ### Fixed (Windows)

@@ -107,7 +107,21 @@ class ChromeBrowser:
         if self.proxy:
             launch_args["proxy"] = {"server": self.proxy}
 
-        self._browser = await self._playwright.chromium.launch(**launch_args)
+        try:
+            self._browser = await self._playwright.chromium.launch(**launch_args)
+        except Exception as exc:
+            # Most common cause: ``pip install ...[chrome]`` ran but
+            # ``playwright install chromium`` didn't, so the Chromium
+            # binary is missing. Playwright's own message is dense, so
+            # we wrap it with the actionable next step.
+            msg = str(exc).lower()
+            if "executable" in msg or "browsertype" in msg or "doesn't exist" in msg:
+                raise RuntimeError(
+                    "Chromium isn't available to Playwright. "
+                    "Run `playwright install chromium` (one-off; downloads "
+                    "the ~150 MB browser bundle into your virtualenv)."
+                ) from exc
+            raise
         self._context = await self._browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
