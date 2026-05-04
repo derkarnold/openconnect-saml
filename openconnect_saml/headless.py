@@ -204,7 +204,7 @@ class HeadlessAuthenticator:
         is_entra = _is_ms_entra_idp(login_url)
 
         # Priority 1: External auth script
-        if self.auth_script:
+        if self.auth_script and self.credentials.username and self.credentials.password:
             logger.info("Using external auth script", script=self.auth_script)
             try:
                 token = await asyncio.get_event_loop().run_in_executor(
@@ -984,7 +984,7 @@ class HeadlessAuthenticator:
         Returns the token string, or raises HeadlessAuthError on failure.
         """
 
-        username = self.credentials.username if self.credentials else ""
+        username = self.credentials.username
         script_path = self.auth_script
         cmd = [script_path, login_url, token_cookie_name, username]
 
@@ -996,6 +996,7 @@ class HeadlessAuthenticator:
         try:
             result = subprocess.run(
                 cmd,
+                input=self.credentials.password,
                 capture_output=True,
                 text=True,
                 timeout=30,  # 30-second timeout
