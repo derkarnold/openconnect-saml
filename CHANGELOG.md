@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.22.4] – 2026-05-04
 
 ### Added
 
@@ -22,6 +22,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Friendlier `--browser chrome` startup error** when the Chromium
   binary is missing (extras installed but `playwright install
   chromium` was skipped).
+
+### CI
+
+- **Integration tests skip on Windows.** They drive long-lived
+  subprocess + mock-HTTPS-server interactions that flaked
+  intermittently on the Windows GHA runner (slower TIME_WAIT, mock
+  gateway thread shutdown timing). Two consecutive identical CI runs
+  on the v0.22.3 commit produced one green and one red Windows job —
+  the latter held the PyPI publish back. Linux + macOS still cover
+  the integration suite, plus all unit tests run on Windows.
+
+### Notes
+
+- v0.22.3 made it to GitHub Releases + AUR but **not** to PyPI: the
+  `publish.yml` gate flaked on Windows even though the identical
+  `release.yml` gate on the same commit was green. Skipping
+  integration tests on Windows in this release removes that flake
+  vector going forward.
+
 
 ## [0.22.3] – 2026-05-01
 
