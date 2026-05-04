@@ -9,16 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Console-only Microsoft Entra ID / Azure AD login (#19)** — when
-  the IdP is Entra (`login.microsoftonline.com` and friends) the
-  headless authenticator now drives Microsoft's multi-step login
-  protocol directly via HTTPS POSTs: `GetCredentialType` → password
-  → MFA / TOTP → KMSI ("Stay signed in?") → SAMLResponse. No browser
+- **Console-only Microsoft Entra ID / Azure AD login** — closes the
+  follow-up half of #19. The original cert-verification half was
+  already fixed in v0.22.0 + v0.22.2; the reporter then asked
+  whether *fully* console-based VPN bring-up was planned for MS365
+  SSO. It is now: when the IdP is Entra
+  (`login.microsoftonline.com` and friends) the headless
+  authenticator drives Microsoft's multi-step login protocol
+  directly via HTTPS POSTs: `GetCredentialType` → password →
+  MFA / TOTP → KMSI ("Stay signed in?") → SAMLResponse. No browser
   binary, no DISPLAY, no callback server. Works for tenants that
   accept username + password + TOTP. Tenants that mandate FIDO2 /
   phone-push / conditional-access surface a clear
-  `HeadlessAuthError` pointing at `--browser chrome` instead, since
-  those flows can't be scripted from a console.
+  `HeadlessAuthError` pointing at `--browser chrome` instead (which
+  also runs Chromium headless via Playwright — no DISPLAY needed),
+  since those flows can't be scripted from a pure-HTTP path. Every
+  Entra POST target is checked against `--allowed-hosts` before
+  credentials or the SAMLResponse leave the process.
 - **Friendlier `--browser chrome` startup error** when the Chromium
   binary is missing (extras installed but `playwright install
   chromium` was skipped).

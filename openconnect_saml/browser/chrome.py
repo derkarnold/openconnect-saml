@@ -110,6 +110,17 @@ class ChromeBrowser:
         try:
             self._browser = await self._playwright.chromium.launch(**launch_args)
         except Exception as exc:
+            # ``async_playwright().start()`` already spawned the driver
+            # process. If launch raises, ``__aexit__`` will never run
+            # (because ``__aenter__`` aborted), so stop the driver here
+            # to avoid leaking node subprocesses + sockets. Swallow
+            # cleanup errors — they shouldn't mask the real failure.
+            try:
+                if self._playwright:
+                    await self._playwright.stop()
+            except Exception:
+                pass
+            self._playwright = None
             # Most common cause: ``pip install ...[chrome]`` ran but
             # ``playwright install chromium`` didn't, so the Chromium
             # binary is missing. Playwright's own message is dense, so

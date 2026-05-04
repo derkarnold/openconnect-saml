@@ -179,18 +179,20 @@ class HeadlessAuthenticator:
         Strategy:
 
         1. If we recognise the IdP as Microsoft Entra ID / Azure AD,
-           try the ``_auto_authenticate_entra`` scripted flow first.
-           That speaks Microsoft's specific multi-step login protocol
+           run the ``_auto_authenticate_entra`` scripted flow. That
+           speaks Microsoft's multi-step login protocol
            (GetCredentialType → password → MFA → KMSI → SAML form) and
            works for tenants that allow username + password + TOTP.
-        2. Otherwise (or if Entra returns something unexpected), fall
-           back to the generic ``_auto_authenticate`` form scraper.
-        3. If both fail and we're on Entra, error out with a hint to
-           use ``--browser chrome`` (Chromium runs headless, no
-           DISPLAY required) — that handles FIDO2 / push / conditional
-           access tenants the scripted path can't reach.
-        4. Otherwise, fall through to the localhost-callback server
-           (which prints a URL the user opens in a browser).
+           Failure messages from this path are kept verbatim (they
+           usually identify the cause: bad credentials, FIDO2-only
+           tenant, federated tenant) and the ``--browser chrome``
+           hint is appended as guidance.
+        2. For non-Entra IdPs, run the generic ``_auto_authenticate``
+           form scraper.
+        3. If the scraper raises and we're on Entra, surface the same
+           combined message — for non-Entra, fall through to the
+           callback server (which prints a URL the user opens in a
+           browser).
         """
         login_url = str(auth_request_response.login_url)
         login_final_url = str(auth_request_response.login_final_url)
@@ -211,36 +213,35 @@ class HeadlessAuthenticator:
                     )
                     if token:
                         return token
-                except HeadlessAuthError as exc:
-                    raise HeadlessAuthError(_ENTRA_HEADLESS_HINT) from exc
                 except Exception as exc:
-                    raise HeadlessAuthError(_ENTRA_HEADLESS_HINT) from exc
-
-            logger.info("Attempting automatic headless authentication")
-            try:
-                token = await asyncio.get_event_loop().run_in_executor(
-                    None,
-                    self._auto_authenticate,
-                    login_url,
-                    login_final_url,
-                    token_cookie_name,
-                )
-                if token:
-                    return token
-            except HeadlessAuthError as exc:
-                if is_entra:
-                    raise HeadlessAuthError(_ENTRA_HEADLESS_HINT) from exc
-                logger.warning(
-                    "Automatic headless auth failed, falling back to callback server",
-                    error=str(exc),
-                )
-            except Exception as exc:
-                if is_entra:
-                    raise HeadlessAuthError(_ENTRA_HEADLESS_HINT) from exc
-                logger.warning(
-                    "Automatic headless auth failed unexpectedly, falling back to callback server",
-                    error=str(exc),
-                )
+                    # Keep the actionable cause (wrong creds, FIDO2-only
+                    # tenant, federated tenant, ...) and append the
+                    # ``--browser chrome`` hint so users have both the
+                    # diagnosis and the next step in one message.
+                    raise HeadlessAuthError(f"{exc}\n\n{_ENTRA_HEADLESS_HINT}") from exc
+            else:
+                logger.info("Attempting automatic headless authentication")
+                try:
+                    token = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        self._auto_authenticate,
+                        login_url,
+                        login_final_url,
+                        token_cookie_name,
+                    )
+                    if token:
+                        return token
+                except HeadlessAuthError as exc:
+                    logger.warning(
+                        "Automatic headless auth failed, falling back to callback server",
+                        error=str(exc),
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Automatic headless auth failed unexpectedly, "
+                        "falling back to callback server",
+                        error=str(exc),
+                    )
 
         # Fallback: callback server
         logger.info("Starting callback server for browser-based authentication")
@@ -428,6 +429,10 @@ class HeadlessAuthenticator:
         # ``FederationRedirectUrl`` we'd need to follow to ADFS / WS-Trust.
         # That branch isn't supported here yet; surface a clear error.
         gct_url = urljoin(resp.url, "/common/GetCredentialType")
+        if not self._host_allowed(gct_url):
+            raise HeadlessAuthError(
+                f"Refusing to POST to {urlparse(gct_url).hostname!r} (not in allowed_hosts)"
+            )
         gct_payload = {
             "username": username,
             "isOtherIdpSupported": True,
@@ -469,6 +474,16 @@ class HeadlessAuthenticator:
         url_post = cfg.get("urlPost") or urljoin(resp.url, "/common/login")
         if not url_post.startswith("http"):
             url_post = urljoin(resp.url, url_post)
+        if not self._host_allowed(url_post):
+            # ``urlPost`` is taken straight from a JSON blob in the page
+            # body. A compromised / malformed page could point it at an
+            # attacker-controlled host and exfiltrate the password we're
+            # about to submit. Refuse to send credentials anywhere the
+            # user's whitelist doesn't already cover.
+            raise HeadlessAuthError(
+                f"Refusing to POST credentials to "
+                f"{urlparse(url_post).hostname!r} (not in allowed_hosts)"
+            )
         login_payload = {
             "i13": "0",
             "login": username,
@@ -528,10 +543,24 @@ class HeadlessAuthenticator:
                     "Microsoft rejected the credentials (wrong username / password / locked out)."
                 )
 
+            # Each step of the flow can return a fresh ``urlPost``, and
+            # each one needs the same whitelist check before we POST
+            # session-bearing fields (TOTP, KMSI choice) to it. Also
+            # validate ``resp.url`` after redirects landed us somewhere
+            # — same threat model.
+            if not self._host_allowed(resp.url):
+                raise HeadlessAuthError(
+                    f"Entra flow followed a redirect to "
+                    f"{urlparse(resp.url).hostname!r} (not in allowed_hosts)"
+                )
             cfg = self._parse_entra_config(page_text)
             url_post = cfg.get("urlPost") or resp.url
             if not url_post.startswith("http"):
                 url_post = urljoin(resp.url, url_post)
+            if not self._host_allowed(url_post):
+                raise HeadlessAuthError(
+                    f"Refusing to POST to {urlparse(url_post).hostname!r} (not in allowed_hosts)"
+                )
             flow_token = cfg.get("sFT", flow_token)
             ctx = cfg.get("sCtx", "")
 
@@ -642,9 +671,19 @@ class HeadlessAuthenticator:
             fields = dict(form.fields) if hasattr(form.fields, "items") else {}
             if "SAMLResponse" not in fields:
                 continue
-            action = form.action
-            if action and not action.startswith("http"):
+            # Default the action to the page's own URL if the form
+            # didn't set one (some IdPs emit ``<form action="">`` and
+            # rely on the browser to use the current document URL).
+            action = form.action or base_url
+            if not action.startswith("http"):
                 action = urljoin(base_url, action)
+            # Same threat model as urlPost: never POST a SAML assertion
+            # to a host the user's whitelist doesn't already cover.
+            if not self._host_allowed(action):
+                raise HeadlessAuthError(
+                    f"Refusing to POST SAMLResponse to "
+                    f"{urlparse(action).hostname!r} (not in allowed_hosts)"
+                )
             resp = self.session.post(
                 action,
                 data=fields,
