@@ -16,3 +16,4 @@ htmlcov/
 uv.lock
 .env
 .plans/
+.idea
