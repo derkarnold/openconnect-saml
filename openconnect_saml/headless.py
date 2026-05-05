@@ -180,7 +180,7 @@ class HeadlessAuthenticator:
         """Attempt headless authentication and return the SSO token.
 
         Strategy:
-        1. If a auth script is provided, run that, otherwise...
+        1. If an script is provided, run that, otherwise...
         2. If we recognise the IdP as Microsoft Entra ID / Azure AD,
            run the ``_auto_authenticate_entra`` scripted flow. That
            speaks Microsoft's multi-step login protocol
