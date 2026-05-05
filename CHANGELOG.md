@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.22.5] – 2026-05-05
+
+### Diagnostic
+
+- **`--browser qt --log-level DEBUG` now traces the WebAuthn surface**
+  (#24 follow-up). The v0.21.0 fix unblocked the slot-signature crash
+  on Qt 6.11+, but the follow-up report shows `webAuthUxRequested`
+  still never fires for some users when DUO asks for a security key
+  — Yubikey/Nitrokey LEDs don't blink. Existing logging was silent
+  on why. v0.22.5 wires four new diagnostic streams behind
+  `--log-level DEBUG`:
+
+  - Every JavaScript ``console.log/warn/error`` from the IdP page,
+    so DUO's WebAuthn capability detection (`credentials.create`
+    availability, feature-flag checks, …) is visible.
+  - ``featurePermissionRequested`` for Geolocation / Mic / Camera /
+    Notifications.
+  - ``selectClientCertificate`` (some IdPs route key auth via it).
+  - Every ``urlChanged``, including hash-fragment redirects that
+    ``loadFinished`` alone misses.
+
+  Plus a startup `libfido2` availability probe — on Linux,
+  QtWebEngine delegates the actual hardware-key ceremony to libfido2,
+  and missing libfido2 / udev rules is a common silent reason
+  WebAuthn never reaches the key. If the lib isn't found we log a
+  clear warning naming the distro package + ``/dev/hidraw*``
+  permission requirement.
+
+  No behaviour change for non-debug runs.
+
 ## [0.22.4] – 2026-05-04
 
 ### Added
