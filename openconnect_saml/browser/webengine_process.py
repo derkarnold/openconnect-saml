@@ -197,6 +197,7 @@ class WebBrowser(QWebEngineView):
         cookie_store = self.page().profile().cookieStore()
         cookie_store.cookieAdded.connect(self._on_cookie_added)
         self.page().loadFinished.connect(self._on_load_finished)
+        self._wire_diagnostics(page)
         self._wire_webauthn(page)
 
     def _wire_webauthn(self, page):
@@ -228,6 +229,98 @@ class WebBrowser(QWebEngineView):
             return
         getattr(page, signal_name).connect(self._on_webauthn_ux_requested)
         logger.debug("WebAuthn UX handler connected", signal=signal_name)
+
+    def _wire_diagnostics(self, page):
+        """Verbose tracing for the WebAuthn-not-firing follow-up on #24.
+
+        QtWebEngine doesn't reliably surface "DUO asked for a security
+        key but the OS-level WebAuthn API was unreachable" — the
+        ``webAuthUxRequested`` signal simply never fires. Without the
+        usual JS console + permission-request hooks the user sees
+        nothing in ``--log-level DEBUG`` either.
+
+        This method routes the relevant signals to our logger so the
+        next debug round shows:
+
+        - every ``console.log/warn/error`` from the IdP page (DUO is
+          chatty about WebAuthn capability detection);
+        - every ``featurePermissionRequested`` (Geolocation, Mic,
+          Camera, Notifications) — gives a hint when DUO probes for
+          capabilities the IdP needs;
+        - libfido2 availability on the host. QtWebEngine on Linux
+          delegates the actual hardware-key ceremony to libfido2; if
+          it's missing or its udev rules aren't in place the security
+          key won't blink even when the JS-side WebAuthn API is
+          available.
+        """
+        # JavaScript console messages — re-route through our logger.
+        # ``QWebEnginePage.javaScriptConsoleMessage`` is normally a
+        # virtual we'd subclass, but assigning a callable on the
+        # instance also works and keeps the diagnostic local.
+        page.javaScriptConsoleMessage = self._log_js_console
+        # ``featurePermissionRequested`` / ``selectClientCertificate``
+        # fire when JS asks for capabilities QtWebEngine gates. WebHID
+        # / WebUSB are *not* available in QtWebEngine 6.x at all —
+        # if DUO falls back to the WebUSB path on key-detection, that
+        # explains the no-blink behaviour.
+        if hasattr(page, "featurePermissionRequested"):
+            page.featurePermissionRequested.connect(
+                lambda url, feat: logger.debug(
+                    "Feature permission probed by IdP",
+                    url=url.toString(),
+                    feature=int(feat),
+                )
+            )
+        if hasattr(page, "selectClientCertificate"):
+            page.selectClientCertificate.connect(
+                lambda selection: logger.debug(
+                    "Client certificate selector requested by IdP",
+                    count=len(getattr(selection, "certificates", lambda: [])()),
+                )
+            )
+        # ``loadStarted`` / ``urlChanged`` are noisy but useful when
+        # the WebAuthn redirect happens via a hash fragment that
+        # ``loadFinished`` alone misses.
+        if hasattr(page, "urlChanged"):
+            page.urlChanged.connect(lambda url: logger.debug("URL changed", url=url.toString()))
+
+        self._log_libfido2_availability()
+
+    @staticmethod
+    def _log_js_console(level, message, line, source_id):
+        """Forward IdP page's ``console.log`` calls to our logger.
+
+        Levels: 0=Info, 1=Warning, 2=Error.
+        """
+        levels = {0: "info", 1: "warning", 2: "error"}
+        logger.debug(
+            "JS console",
+            level=levels.get(level, str(level)),
+            message=message,
+            line=line,
+            source=source_id,
+        )
+
+    @staticmethod
+    def _log_libfido2_availability():
+        """Log whether the host has the libfido2 library QtWebEngine
+        needs to drive USB security keys on Linux. Missing libfido2 is
+        a common silent reason WebAuthn never reaches the key.
+        """
+        import ctypes.util
+
+        path = ctypes.util.find_library("fido2")
+        if path:
+            logger.debug("libfido2 detected", path=path)
+        else:
+            logger.warning(
+                "libfido2 NOT found on this host. QtWebEngine uses libfido2 "
+                "to drive USB security keys on Linux; without it FIDO2 / "
+                "WebAuthn requests will silently fail. Install your distro's "
+                "libfido2 package (e.g. ``libfido2-1`` on Debian/Ubuntu, "
+                "``libfido2`` on Arch, ``libfido2`` on Fedora) and ensure the "
+                "udev rules grant your user access to /dev/hidraw* devices."
+            )
 
     # No @pyqtSlot decorator: the signal is
     # ``webAuthUxRequested(QWebEngineWebAuthUxRequest*)`` and PyQt6 6.11+
