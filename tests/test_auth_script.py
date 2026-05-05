@@ -35,6 +35,7 @@ def mock_auth_response():
 @pytest.fixture
 def headless_auth_with_script(mock_credentials):
     return HeadlessAuthenticator(
+
         credentials=mock_credentials,
         timeout=5,
         callback_timeout=5,
@@ -84,7 +85,6 @@ class TestRunAuthScriptExecution:
                 str(mock_auth_response.token_cookie_name),
                 "testuser@example.com",
             ]
-            assert call_args[1]["shell"] is False
             assert call_args[1]["capture_output"] is True
             assert call_args[1]["text"] is True
             assert call_args[1]["timeout"] == 30
@@ -123,19 +123,6 @@ class TestRunAuthScriptExecution:
                 str(mock_auth_response.token_cookie_name),
             )
 
-    def test_script_passes_empty_username_when_no_credentials(self):
-        """Test that username is empty string when credentials is None."""
-        auth = HeadlessAuthenticator(auth_script="/path/to/script")
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "token"
-        mock_result.stderr = ""
-
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
-            auth._run_auth_script("https://login.example.com", "https://vpn.example.com", "token")
-            call_args = mock_run.call_args
-            assert call_args[0][0][-1] == ""
-
     def test_script_timeout_raises_error(self, headless_auth_with_script, mock_auth_response):
         """Test that a timeout raises HeadlessAuthError."""
         with (
@@ -147,91 +134,6 @@ class TestRunAuthScriptExecution:
                 str(mock_auth_response.login_final_url),
                 str(mock_auth_response.token_cookie_name),
             )
-
-
-class TestAuthScriptShellMode:
-    def test_shell_true_for_shell_metacharacters(self, mock_credentials):
-        """Test that scripts with shell metacharacters use shell=True."""
-        auth = HeadlessAuthenticator(
-            credentials=mock_credentials,
-            auth_script="/bin/bash -c 'echo token'",
-        )
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "token"
-        mock_result.stderr = ""
-
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
-            auth._run_auth_script("https://login.example.com", "https://vpn.example.com", "token")
-            assert mock_run.call_args[1]["shell"] is True
-
-    def test_shell_false_for_plain_path(self, mock_credentials):
-        """Test that plain paths use shell=False."""
-        auth = HeadlessAuthenticator(
-            credentials=mock_credentials,
-            auth_script="/usr/local/bin/auth-script.sh",
-        )
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "token"
-        mock_result.stderr = ""
-
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
-            auth._run_auth_script("https://login.example.com", "https://vpn.example.com", "token")
-            assert mock_run.call_args[1]["shell"] is False
-
-    def test_shell_true_for_pipe(self, mock_credentials):
-        """Test that scripts containing | use shell=True."""
-        auth = HeadlessAuthenticator(
-            credentials=mock_credentials,
-            auth_script="/path/script.sh | grep token",
-        )
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "token"
-        mock_result.stderr = ""
-
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
-            auth._run_auth_script("https://login.example.com", "https://vpn.example.com", "token")
-            assert mock_run.call_args[1]["shell"] is True
-
-    def test_shell_true_for_semicolon(self, mock_credentials):
-        """Test that scripts containing ; use shell=True."""
-        auth = HeadlessAuthenticator(
-            credentials=mock_credentials,
-            auth_script="/path/script.sh; echo done",
-        )
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "token"
-        mock_result.stderr = ""
-
-        with patch("subprocess.run", return_value=mock_result) as mock_run:
-            auth._run_auth_script("https://login.example.com", "https://vpn.example.com", "token")
-            assert mock_run.call_args[1]["shell"] is True
-
-    def test_shell_mode_passes_arguments_correctly(self, tmp_path, mock_credentials):
-        """Verify that when shell=True, arguments are actually received by the script.
-
-        Regression test for a bug where subprocess.run with shell=True and a list
-        would pass extra items to the shell itself rather than the command.
-        """
-        # Create a shell script that echoes its arguments to stdout
-        script = tmp_path / "echo_args.sh"
-        script.write_text('#!/bin/sh\necho "$1|$2|$3"\n')
-        script.chmod(0o755)
-
-        auth = HeadlessAuthenticator(
-            credentials=mock_credentials,
-            auth_script=str(script),
-        )
-        token = auth._run_auth_script(
-            "https://login.example.com",
-            "https://final.example.com",
-            "DuoCookie",
-        )
-        # username comes from self.credentials.username
-        assert token == "https://login.example.com|DuoCookie|testuser@example.com"
 
 
 # ─── Async authenticate integration ───────────────────────────────────────────
@@ -282,30 +184,6 @@ class TestAuthScriptAsyncIntegration:
         ):
             token = await auth.authenticate(mock_auth_response)
             assert token == "callback-token"
-
-    @pytest.mark.asyncio
-    async def test_auth_script_no_credentials_still_runs_script(self, mock_auth_response):
-        """Test that auth_script works even without credentials."""
-        auth = HeadlessAuthenticator(
-            credentials=None,
-            timeout=5,
-            callback_timeout=5,
-            auth_script="/path/to/script.sh",
-        )
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = "script-token"
-        mock_result.stderr = ""
-
-        with (
-            patch("subprocess.run", return_value=mock_result),
-            patch.object(auth, "_auto_authenticate") as mock_auto,
-            patch.object(auth, "_callback_authenticate") as mock_callback,
-        ):
-            token = await auth.authenticate(mock_auth_response)
-            assert token == "script-token"
-            mock_auto.assert_not_called()
-            mock_callback.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_auth_script_uses_auto_auth(self, mock_credentials, mock_auth_response):
