@@ -1,0 +1,34 @@
+# pre-commit hooks for openconnect-saml.
+#
+# Install once per checkout:
+#
+#     pip install pre-commit
+#     pre-commit install
+#
+# After that, `git commit` runs the hooks below on staged files. To
+# run them across the whole repo manually:
+#
+#     pre-commit run --all-files
+
+repos:
+  # Whitespace, EOL, large-file, merge-conflict-marker hygiene.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^docs/.*\.md$  # keep markdown line-break-via-trailing-spaces intact
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-toml
+      - id: check-yaml
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # ruff: lint + format. Mirrors the [tool.ruff] config in pyproject.toml,
+  # so what runs locally matches what runs in CI.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.6
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format

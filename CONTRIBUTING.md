@@ -21,6 +21,20 @@ Run the test suite + lint before pushing:
 .venv/bin/ruff format --check .
 ```
 
+Or — for the lint half — install the pre-commit hooks once and let
+them run on every `git commit`:
+
+```bash
+pip install pre-commit
+pre-commit install                  # one-off per checkout
+pre-commit run --all-files          # one-off across whole tree (e.g. after pull)
+```
+
+The hook config (`.pre-commit-config.yaml`) runs the same `ruff
+check --fix` and `ruff format` that CI checks, plus
+trailing-whitespace / EOL / merge-conflict-marker hygiene. If a
+hook auto-fixes something, `git add` the result and re-commit.
+
 Everything green? Push. CI re-runs the same matrix on
 `ubuntu-latest, 3.10/3.11/3.12/3.13` plus `windows-latest, 3.12`
 (see `.github/workflows/test.yml`).
