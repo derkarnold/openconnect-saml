@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — staging for v1.0
+
+### Added
+
+- **KeePassXC TOTP provider** (`--totp-source keepassxc`). Reads
+  the OTP from a `.kdbx` database via `keepassxc-cli show -a TOTP`.
+  New flags: `--keepassxc-db PATH`, `--keepassxc-entry NAME`,
+  `--keepassxc-keyfile PATH` (optional). Database password comes
+  from `KEEPASSXC_DB_PASSWORD` env var (preferred for unattended
+  runs) or an interactive `getpass` prompt; never on argv.
+  Profile-persistable as `[keepassxc]` config section.
+
+### Docs / Project hygiene
+
+- New `CONTRIBUTING.md` (dev setup, issue/PR conventions, release
+  policy = main + tags / no per-version branches, project
+  layout walkthrough).
+- New `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1, by reference).
+- README "Credits" expanded to thank named contributors from recent
+  issues and PRs.
+- mkdocs-material site at `mkdocs.yml` + `.github/workflows/docs.yml`
+  rebuilds + deploys to GitHub Pages on every push to main that
+  touches `docs/`.
+- Backfilled CHANGELOG entries for v0.1.0 through v0.7.1 from the
+  per-tag git log so every released version has notes.
+
+### CI / Testing
+
+- Coverage exclusions for `gui.py`, `interactive_tui.py`,
+  `browser/browser.py`, `browser/chrome.py` (Qt / Playwright code
+  that can't honestly run in CI). Baseline rises from 60.65% to
+  69.84%, floor raised from 50 to 68.
+- New `test_headless_entra.py` (9 cases) covering the scripted
+  Microsoft Entra flow: guardrails, federated / passwordless
+  forks, happy path, wrong-password, unscriptable MFA branch.
+- `test_tui.py` extended (+17 cases) covering format helpers,
+  `_augment_with_rate`, `_find_vpn_process`, `_print_status_json`,
+  `_plain_output`, `_check_killswitch_active`.
+- `test_keepassxc.py` (12 cases) for the new TOTP provider.
+- `.pre-commit-config.yaml` with ruff + EOL/whitespace hygiene
+  (opt-in via `pre-commit install`).
+- Dependabot watching pip + GitHub Actions weekly; pytest+ruff
+  patches grouped, majors individual.
+
 ## [0.23.0] – 2026-05-05
 
 ### Added

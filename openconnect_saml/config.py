@@ -181,6 +181,15 @@ class PassConfig(ConfigNode):
 
 
 @attr.s
+class KeePassXCConfig(ConfigNode):
+    """Configuration for the KeePassXC TOTP provider."""
+
+    database = attr.ib(default="")
+    entry = attr.ib(default="")
+    keyfile = attr.ib(default="")
+
+
+@attr.s
 class KillSwitchSettings(ConfigNode):
     """Persisted kill-switch settings (loaded via ``[kill_switch]`` section)."""
 
@@ -322,6 +331,7 @@ _convert_twofauth = _node_converter(TwoFAuthConfig)
 _convert_bitwarden = _node_converter(BitwardenConfig)
 _convert_onepassword = _node_converter(OnePasswordConfig)
 _convert_pass = _node_converter(PassConfig)
+_convert_keepassxc = _node_converter(KeePassXCConfig)
 _convert_killswitch = _node_converter(KillSwitchSettings)
 
 
@@ -390,6 +400,7 @@ class ProfileConfig(ConfigNode):
     bitwarden = attr.ib(default=None, converter=_convert_bitwarden)
     onepassword = attr.ib(default=None, converter=_convert_onepassword)
     pass_ = attr.ib(default=None, converter=_convert_pass)
+    keepassxc = attr.ib(default=None, converter=_convert_keepassxc)
     routes = attr.ib(factory=list, converter=_convert_str_list)
     no_routes = attr.ib(factory=list, converter=_convert_str_list)
 
@@ -474,6 +485,7 @@ class Config(ConfigNode):
     bitwarden = attr.ib(default=None, converter=_convert_bitwarden)
     onepassword = attr.ib(default=None, converter=_convert_onepassword)
     pass_ = attr.ib(default=None, converter=_convert_pass)
+    keepassxc = attr.ib(default=None, converter=_convert_keepassxc)
     profiles = attr.ib(factory=dict, converter=_convert_profiles)
     profile_groups = attr.ib(factory=dict, converter=_convert_profile_groups)
     active_profile = attr.ib(default=None)

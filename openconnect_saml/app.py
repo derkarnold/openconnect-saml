@@ -26,6 +26,7 @@ from openconnect_saml.browser import Terminated
 from openconnect_saml.config import (
     BitwardenConfig,
     Credentials,
+    KeePassXCConfig,
     OnePasswordConfig,
     PassConfig,
     TwoFAuthConfig,
@@ -34,6 +35,7 @@ from openconnect_saml.history import ConnectionTracker
 from openconnect_saml.profile import get_profiles
 from openconnect_saml.totp_providers import (
     BitwardenProvider,
+    KeePassXCProvider,
     OnePasswordProvider,
     PassProvider,
     TwoFAuthProvider,
@@ -536,6 +538,28 @@ def configure_totp_provider(args, cfg, credentials) -> None:
         credentials.set_totp_provider(PassProvider(entry=pass_entry))
         cfg.pass_ = PassConfig(entry=pass_entry)
         logger.info("Using pass TOTP provider")
+        return
+
+    if source == "keepassxc":
+        kp_db = getattr(args, "keepassxc_db", None)
+        kp_entry = getattr(args, "keepassxc_entry", None)
+        kp_keyfile = getattr(args, "keepassxc_keyfile", None)
+        if cfg.keepassxc:
+            kp_db = kp_db or cfg.keepassxc.database
+            kp_entry = kp_entry or cfg.keepassxc.entry
+            kp_keyfile = kp_keyfile or (cfg.keepassxc.keyfile or None)
+        if not kp_db or not kp_entry:
+            logger.error(
+                "keepassxc TOTP source requires --keepassxc-db AND --keepassxc-entry "
+                "(or [keepassxc] config section)"
+            )
+            raise ValueError("Missing keepassxc configuration", 25)
+        credentials.totp_source = "keepassxc"
+        credentials.set_totp_provider(
+            KeePassXCProvider(database=kp_db, entry=kp_entry, keyfile=kp_keyfile)
+        )
+        cfg.keepassxc = KeePassXCConfig(database=kp_db, entry=kp_entry, keyfile=kp_keyfile or "")
+        logger.info("Using KeePassXC TOTP provider")
         return
 
     if source == "2fauth":

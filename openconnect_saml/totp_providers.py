@@ -469,3 +469,122 @@ class PassProvider(TotpProvider):
 
         logger.info("TOTP fetched from pass successfully")
         return otp
+
+
+class KeePassXCProvider(TotpProvider):
+    """Fetch TOTP from a KeePassXC database via ``keepassxc-cli show -t``.
+
+    Requires the ``keepassxc-cli`` binary (ships with KeePassXC).
+    The database password is read from stdin so it doesn't appear
+    in ``ps``; the ``KEEPASSXC_DB_PASSWORD`` env var is consulted as
+    a fallback, otherwise we prompt with ``getpass``.
+
+    Parameters
+    ----------
+    database : str
+        Path to the ``.kdbx`` database file.
+    entry : str
+        Entry path in the database (e.g. ``VPN/Work``).
+    keyfile : str or None
+        Optional path to a keyfile that protects the database.
+    timeout : int
+        CLI command timeout in seconds.
+    """
+
+    PASSWORD_ENV = "KEEPASSXC_DB_PASSWORD"
+
+    def __init__(
+        self,
+        database: str,
+        entry: str,
+        keyfile: str | None = None,
+        timeout: int = 15,
+    ):
+        self.database = database
+        self.entry = entry
+        self.keyfile = keyfile
+        self.timeout = timeout
+
+    def _get_db_password(self) -> str:
+        # Prefer env so unattended runs work; fall back to interactive
+        # prompt only when stdin is a TTY (matches our other passwords-
+        # from-stdin policy in ``app._read_password``).
+        env_pwd = os.environ.get(self.PASSWORD_ENV, "")
+        if env_pwd:
+            return env_pwd
+        import getpass
+        import sys
+
+        if sys.stdin.isatty():
+            return getpass.getpass(prompt=f"KeePassXC password for {self.database!r}: ")
+        return ""
+
+    def get_totp(self) -> str | None:
+        cli = shutil.which("keepassxc-cli")
+        if not cli:
+            logger.error("keepassxc-cli not found in PATH")
+            return None
+
+        cmd = [cli, "show", "-s", "-a", "TOTP"]
+        if self.keyfile:
+            cmd += ["--key-file", self.keyfile]
+        cmd += [self.database, self.entry]
+
+        logger.info("Fetching TOTP from KeePassXC...", entry=self.entry)
+        password = self._get_db_password()
+
+        try:
+            result = subprocess.run(  # nosec
+                cmd,
+                input=password,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+            )
+        except subprocess.TimeoutExpired:
+            logger.error(
+                "keepassxc-cli timed out — DB may be very large or password wrong",
+                timeout=self.timeout,
+            )
+            return None
+        except FileNotFoundError:
+            logger.error("keepassxc-cli not found")
+            return None
+        except OSError as exc:
+            logger.error("keepassxc-cli failed", error=str(exc))
+            return None
+
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            lowered = stderr.lower()
+            if "could not find entry" in lowered or "entry not found" in lowered:
+                logger.error("KeePassXC entry not found", entry=self.entry)
+            elif "wrong key" in lowered or "invalid credentials" in lowered:
+                logger.error(
+                    "KeePassXC rejected the database password / keyfile",
+                    database=self.database,
+                )
+            elif "no totp" in lowered or "no time-based" in lowered:
+                logger.error(
+                    "KeePassXC entry has no TOTP secret configured",
+                    entry=self.entry,
+                )
+            else:
+                logger.error(
+                    "keepassxc-cli returned an error",
+                    exit_code=result.returncode,
+                    stderr=stderr,
+                )
+            return None
+
+        # ``-a TOTP`` returns just the 6-digit code; some KeePassXC
+        # versions include leading whitespace from the column padding,
+        # or a header line ahead of the value.
+        lines = (result.stdout or "").strip().splitlines()
+        otp = lines[-1].strip() if lines else ""
+        if not otp:
+            logger.error("KeePassXC returned an empty TOTP")
+            return None
+
+        logger.info("TOTP fetched from KeePassXC successfully")
+        return otp

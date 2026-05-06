@@ -158,7 +158,7 @@ def _add_connection_args(parser):
     totp_group.add_argument(
         "--totp-source",
         dest="totp_source",
-        choices=["local", "2fauth", "bitwarden", "1password", "pass", "none"],
+        choices=["local", "2fauth", "bitwarden", "1password", "pass", "keepassxc", "none"],
         default=None,
         help="TOTP provider, or 'none' to skip the TOTP prompt entirely",
     )
@@ -200,6 +200,27 @@ def _add_connection_args(parser):
         dest="pass_entry",
         default=None,
         help="pass (password-store) entry path for TOTP (requires pass-otp)",
+    )
+    totp_group.add_argument(
+        "--keepassxc-db",
+        dest="keepassxc_db",
+        default=None,
+        metavar="PATH",
+        help="KeePassXC database (.kdbx) for the keepassxc TOTP source",
+    )
+    totp_group.add_argument(
+        "--keepassxc-entry",
+        dest="keepassxc_entry",
+        default=None,
+        metavar="ENTRY",
+        help="KeePassXC entry path inside the database (e.g. 'VPN/Work')",
+    )
+    totp_group.add_argument(
+        "--keepassxc-keyfile",
+        dest="keepassxc_keyfile",
+        default=None,
+        metavar="PATH",
+        help="Optional keyfile that protects the KeePassXC database",
     )
 
     reconnect_group = parser.add_argument_group("Reconnect options")
@@ -405,7 +426,7 @@ def create_argparser():
     add_parser.add_argument(
         "--totp-source",
         default=None,
-        choices=["local", "2fauth", "bitwarden", "1password", "pass", "none"],
+        choices=["local", "2fauth", "bitwarden", "1password", "pass", "keepassxc", "none"],
     )
     add_parser.add_argument(
         "--browser",
