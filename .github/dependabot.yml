@@ -1,0 +1,53 @@
+# Dependabot config — keeps Python deps + GitHub Actions versions
+# fresh without manual chasing.
+#
+# Two ecosystems are watched:
+# - pip:           our runtime + dev/optional deps in pyproject.toml
+# - github-actions: every uses: pin in .github/workflows/
+
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Vienna
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: "deps"
+      include: scope
+    groups:
+      # Batch low-risk patch / minor bumps so we get one PR per week
+      # instead of N. Major bumps still get individual PRs.
+      pytest:
+        patterns:
+          - "pytest*"
+        update-types:
+          - patch
+          - minor
+      ruff:
+        patterns:
+          - "ruff"
+        update-types:
+          - patch
+          - minor
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Vienna
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "ci"
+      include: scope
