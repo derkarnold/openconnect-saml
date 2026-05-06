@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Federated Microsoft Entra (ADFS / WS-Trust 2005) scripted flow.**
+  Closes the federated half of the Entra path that was bailing out
+  with a clean error since v0.22.4. When `GetCredentialType` reports
+  `FederationRedirectUrl`, the wrapper now:
+  1. Hits Microsoft realm-discovery (`getuserrealm.srf`) to find the
+     tenant's WS-Trust 2005 endpoint;
+  2. POSTs a SOAP envelope (UsernameToken with the user's password)
+     to that endpoint;
+  3. Extracts the SAML 1.1 assertion from the RSTR;
+  4. Wraps it in a `wresult` POST to `login.microsoftonline.com/login.srf`
+     so MS issues federated-auth cookies;
+  5. Picks up the regular post-password page, which carries the
+     SAMLResponse form bound for the SP / Cisco gateway.
+
+  Marked **experimental** — the flow is well-spec'd but we don't have
+  a federated test tenant in CI, so the first real-world failure
+  will surface in a user issue. Logs a clear startup warning and
+  recommends `--browser chrome` as the fallback. All POST targets
+  (realm-discovery, WS-Trust endpoint, login.srf) are checked
+  against `--allowed-hosts`. Password is XML-escaped in the SOAP
+  body.
+
 - **KeePassXC TOTP provider** (`--totp-source keepassxc`). Reads
   the OTP from a `.kdbx` database via `keepassxc-cli show -a TOTP`.
   New flags: `--keepassxc-db PATH`, `--keepassxc-entry NAME`,

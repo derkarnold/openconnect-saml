@@ -487,9 +487,30 @@ class HeadlessAuthenticator:
         gct = gct_resp.json()
         creds = gct.get("Credentials", {}) if isinstance(gct, dict) else {}
         if creds.get("FederationRedirectUrl"):
+            # Federated tenant — route through ADFS / WS-Trust 2005.
+            # Returns the response we should treat as if it had come
+            # straight from the password POST (i.e. the next page in
+            # the main flow). v1.0: experimental; logs a warning.
+            logger.warning(
+                "Federated MS Entra tenant detected — using experimental "
+                "WS-Trust flow. If it fails, fall back to '--browser chrome'.",
+                federation_redirect=creds["FederationRedirectUrl"],
+            )
+            resp = self._authenticate_via_ws_trust(
+                username=username,
+                password=password,
+                user_realm_login=username,
+            )
+            # Hand off to the outer iteration loop — the wresult POST
+            # to login.srf typically lands us on a SAMLResponse form.
+            doc = lxml_html.fromstring(resp.content, base_url=resp.url)
+            saml_token = self._submit_saml_response_form(doc, resp.url, token_cookie_name)
+            if saml_token:
+                return saml_token
             raise HeadlessAuthError(
-                "Tenant is federated (uses ADFS / WS-Trust). The scripted "
-                "console-only path doesn't support that branch yet."
+                "WS-Trust flow completed but no SAMLResponse form was "
+                "returned. The federated tenant may have additional "
+                "MFA steps the scripted path can't drive."
             )
         # ``HasPassword=False`` typically means passwordless / FIDO2 only.
         if creds.get("HasPassword") is False:
@@ -672,6 +693,171 @@ class HeadlessAuthenticator:
             )
 
         raise HeadlessAuthError("Entra flow exceeded its step budget without a SAMLResponse")
+
+    # -- ADFS / WS-Trust 2005 path (federated MS Entra tenants) -----------
+    #
+    # When ``GetCredentialType`` reports a tenant is federated, login
+    # ceremonies don't happen at login.microsoftonline.com — they happen
+    # at the customer's ADFS instance, which exposes a WS-Trust 2005
+    # SOAP endpoint that swaps username + password for a SAML 1.1
+    # assertion. We POST that assertion back to MS at /login.srf with
+    # the ``wresult`` parameter, and from there the flow rejoins the
+    # normal post-password page (which carries a SAML auto-submit form
+    # bound for the SP / Cisco gateway).
+    #
+    # Documented under MS-MWBF and the ``msal-python`` source.
+    # Best-effort and untested against a real federated tenant — the
+    # caller logs a clear "experimental" warning and we fall back to
+    # ``--browser chrome`` if anything in here surprises us.
+    _WS_TRUST_NS = {
+        "s": "http://www.w3.org/2003/05/soap-envelope",
+        "wst": "http://docs.oasis-open.org/ws-sx/ws-trust/200512",
+        "saml": "urn:oasis:names:tc:SAML:1.0:assertion",
+    }
+
+    def _authenticate_via_ws_trust(self, *, username, password, user_realm_login):
+        """Drive a federated MS Entra tenant through ADFS / WS-Trust.
+
+        Returns the ``requests.Response`` from the final POST to
+        ``login.microsoftonline.com/login.srf`` so the caller can
+        continue the regular Entra flow.
+        """
+        # 1. Realm discovery — tells us where the WS-Trust endpoint
+        # lives. Returns JSON with ``AuthURL`` (WS-Trust 2005),
+        # ``federation_protocol``, etc.
+        realm_url = (
+            f"https://login.microsoftonline.com/getuserrealm.srf?login={user_realm_login}&xml=0"
+        )
+        if not self._host_allowed(realm_url):
+            raise HeadlessAuthError(
+                "Refusing to query realm-discovery on "
+                f"{urlparse(realm_url).hostname!r} (not in allowed_hosts)"
+            )
+        realm_resp = self.session.get(realm_url, timeout=self.timeout)
+        realm_resp.raise_for_status()
+        realm = realm_resp.json() if hasattr(realm_resp, "json") else {}
+        ws_trust_url = realm.get("AuthURL") or realm.get("auth_url")
+        if not ws_trust_url:
+            raise HeadlessAuthError(
+                "Realm-discovery did not return a WS-Trust AuthURL — "
+                "tenant federation config may be unusual."
+            )
+        if not self._host_allowed(ws_trust_url):
+            raise HeadlessAuthError(
+                f"WS-Trust endpoint host {urlparse(ws_trust_url).hostname!r} "
+                "is not in allowed_hosts; refusing to send credentials "
+                "to it."
+            )
+
+        # 2. Build + POST SOAP envelope. ADFS validates user/pwd and
+        # returns a SAML 1.1 assertion wrapped in an RSTR.
+        soap_body = self._ws_trust_soap_envelope(
+            username=username,
+            password=password,
+            ws_trust_url=ws_trust_url,
+        )
+        wst_resp = self.session.post(
+            ws_trust_url,
+            data=soap_body.encode("utf-8"),
+            headers={
+                "Content-Type": "application/soap+xml; charset=utf-8",
+                "SOAPAction": ("http://docs.oasis-open.org/ws-sx/ws-trust/200512/RST/Issue"),
+            },
+            timeout=self.timeout,
+        )
+        wst_resp.raise_for_status()
+
+        # 3. Extract the SAML 1.1 assertion (xml fragment).
+        from lxml import etree as lxml_etree
+
+        try:
+            root = lxml_etree.fromstring(wst_resp.content)
+        except lxml_etree.XMLSyntaxError as exc:
+            raise HeadlessAuthError(f"WS-Trust response wasn't valid XML: {exc}") from exc
+        assertions = root.findall(".//{urn:oasis:names:tc:SAML:1.0:assertion}Assertion")
+        if not assertions:
+            # Some ADFS error responses are well-formed SOAP faults —
+            # surface the fault text if we can find one.
+            faults = root.findall(".//{*}Reason") + root.findall(".//{*}Text")
+            fault_text = next((f.text for f in faults if f.text), "no fault text")
+            raise HeadlessAuthError(f"ADFS rejected the credentials: {fault_text}")
+        assertion_xml = lxml_etree.tostring(assertions[0]).decode("utf-8")
+
+        # 4. POST the assertion to login.srf as ``wresult``. Microsoft
+        # then issues federated-auth cookies; the response is the
+        # post-password page that the main flow expects.
+        login_srf = "https://login.microsoftonline.com/login.srf"
+        if not self._host_allowed(login_srf):
+            raise HeadlessAuthError(
+                "Refusing to POST WS-Trust assertion to "
+                f"{urlparse(login_srf).hostname!r} (not in allowed_hosts)"
+            )
+        return self.session.post(
+            login_srf,
+            data={
+                "wa": "wsignin1.0",
+                "wresult": (
+                    "<t:RequestSecurityTokenResponse "
+                    'xmlns:t="http://schemas.xmlsoap.org/ws/2005/02/trust">'
+                    f"{assertion_xml}"
+                    "</t:RequestSecurityTokenResponse>"
+                ),
+                "wctx": "",
+            },
+            timeout=self.timeout,
+            allow_redirects=True,
+        )
+
+    @classmethod
+    def _ws_trust_soap_envelope(cls, *, username, password, ws_trust_url):
+        """Build the WS-Trust 2005 RST envelope. Username + password
+        go into a UsernameToken; the AppliesTo URI is fixed to MS's
+        federation realm."""
+        import html as html_mod
+        import uuid
+
+        msg_id = f"urn:uuid:{uuid.uuid4()}"
+        u = html_mod.escape(username)
+        p = html_mod.escape(password)
+        return (
+            '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" '
+            'xmlns:a="http://www.w3.org/2005/08/addressing" '
+            'xmlns:o="http://docs.oasis-open.org/wss/2004/01/'
+            'oasis-200401-wss-wssecurity-secext-1.0.xsd">'
+            "<s:Header>"
+            '<a:Action s:mustUnderstand="1">'
+            "http://docs.oasis-open.org/ws-sx/ws-trust/200512/RST/Issue"
+            "</a:Action>"
+            f"<a:MessageID>{msg_id}</a:MessageID>"
+            "<a:ReplyTo><a:Address>http://www.w3.org/2005/08/addressing/anonymous"
+            "</a:Address></a:ReplyTo>"
+            f'<a:To s:mustUnderstand="1">{ws_trust_url}</a:To>'
+            '<o:Security s:mustUnderstand="1">'
+            "<o:UsernameToken>"
+            f"<o:Username>{u}</o:Username>"
+            f"<o:Password>{p}</o:Password>"
+            "</o:UsernameToken>"
+            "</o:Security>"
+            "</s:Header>"
+            "<s:Body>"
+            "<trust:RequestSecurityToken "
+            'xmlns:trust="http://docs.oasis-open.org/ws-sx/ws-trust/200512">'
+            '<wsp:AppliesTo xmlns:wsp="http://schemas.xmlsoap.org/ws/2004/09/policy">'
+            "<wsa:EndpointReference "
+            'xmlns:wsa="http://www.w3.org/2005/08/addressing">'
+            "<wsa:Address>urn:federation:MicrosoftOnline</wsa:Address>"
+            "</wsa:EndpointReference>"
+            "</wsp:AppliesTo>"
+            "<trust:KeyType>"
+            "http://docs.oasis-open.org/ws-sx/ws-trust/200512/Bearer"
+            "</trust:KeyType>"
+            "<trust:RequestType>"
+            "http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue"
+            "</trust:RequestType>"
+            "</trust:RequestSecurityToken>"
+            "</s:Body>"
+            "</s:Envelope>"
+        )
 
     def _parse_entra_config(self, html_text):
         """Pull the embedded ``$Config = {...}`` JSON out of an Entra
