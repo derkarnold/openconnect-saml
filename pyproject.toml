@@ -99,8 +99,17 @@ skips = ["B101"]  # assert used in tests is fine
 
 [tool.coverage.run]
 source = ["openconnect_saml"]
-omit = ["openconnect_saml/browser/webengine_process.py"]  # Qt GUI needs display
+# Modules that genuinely can't run in CI without a graphical session
+# or a real Playwright/Chromium install. Exercising them via mocks
+# would test our mocks, not the code.
+omit = [
+    "openconnect_saml/browser/webengine_process.py",  # Qt subprocess; needs DISPLAY
+    "openconnect_saml/browser/browser.py",            # Qt subprocess driver
+    "openconnect_saml/browser/chrome.py",             # Playwright async driver; integration-only
+    "openconnect_saml/gui.py",                        # Qt GUI launcher; needs DISPLAY
+    "openconnect_saml/interactive_tui.py",            # rich full-screen TUI; needs real terminal
+]
 
 [tool.coverage.report]
 show_missing = true
-fail_under = 50
+fail_under = 65
