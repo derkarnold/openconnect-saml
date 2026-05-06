@@ -110,12 +110,39 @@ with [docs/README.md](docs/README.md) for the index.
 
 ## Credits
 
+**Upstream / origin**
+
 - [László Vaskó (vlaci)](https://github.com/vlaci) — original
   [`openconnect-sso`](https://github.com/vlaci/openconnect-sso)
 - [Kowyo](https://github.com/kowyo) —
   [`openconnect-lite`](https://github.com/kowyo/openconnect-lite)
   modernization
-- Community contributors for issues, PRs, and testing
+
+**Recent contributors**
+
+- [@derkarnold](https://github.com/derkarnold) — `--auth-script`
+  pluggable authentication (#29, v0.23.0)
+- [@salty-flower](https://github.com/salty-flower) — root-cause
+  diagnosis of the PyQt 6.11 WebAuthn slot-signature crash (#24,
+  v0.21.0)
+- [@kobuki](https://github.com/kobuki) — `--no-cert-check` /
+  self-signed gateway report driving the v0.22.0 + v0.22.2 cert
+  fixes and the console-only Microsoft Entra path in v0.22.4 (#19)
+- [@OmarHawk](https://github.com/OmarHawk) — `--allowed-hosts`
+  whitelist proposal (#11, v0.20.0), `--useragent` (#12, v0.7.0),
+  openconnect passthrough (#13, v0.7.0), MFA discussion that
+  shaped the chrome / qt / headless three-way split (#17)
+- [@BBKmsZrd](https://github.com/BBKmsZrd) — Yubikey / Nitrokey
+  hardware-token reports + iterative debug-log triage (#21, #24)
+- [@cnekmp](https://github.com/cnekmp) — `sso-v2-login` parser
+  regression report driving the namespaced-fields + form fallback
+  (#20, v0.8.1)
+- [@mdesantis](https://github.com/mdesantis) — minimal GUI proposal
+  + NetworkManager `.nmconnection` export request (#22, v0.8.x)
+
+**Everyone else** who's filed an issue, tested a release candidate,
+or pasted a debug log — thank you. See the full
+[contributors graph](https://github.com/mschabhuettl/openconnect-saml/graphs/contributors).
 
 ---
 
