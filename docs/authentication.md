@@ -210,3 +210,39 @@ cert_key = "~/certs/work.key"
 Resolution order: CLI flag > per-profile field. If you have multiple
 VPNs each with its own client cert, the per-profile fields are the
 clean way to manage that.
+
+## External authentication script (`--auth-script`)
+
+When the built-in auto-flow can't drive your IdP — typically tenants
+with bespoke MFA flows, ADFS / WS-Trust federation, or in-house SSO
+gateways — you can hand off the SAML phase to your own script.
+
+```bash
+openconnect-saml connect work --auth-script /usr/local/bin/my-saml.sh
+# or persistently:
+openconnect-saml profiles set work auth_script /usr/local/bin/my-saml.sh
+```
+
+**Contract.** The wrapper runs your script as:
+
+```
+<script> <login_url> <token_cookie_name> <username>
+```
+
+with the password fed to **stdin** (one line, no trailing newline
+added). Your script must print **the SSO token** to **stdout** and
+exit 0; anything on stderr is captured for logging only. A non-zero
+exit, an empty stdout, or exceeding the wrapper's `--timeout`
+(default 30s) all fall back to the localhost callback server.
+
+**Environment is restricted** to `PATH` and `HOME` only — the script
+does not inherit `REQUESTS_CA_BUNDLE`, AWS credentials, keyring
+tokens, or anything else from the wrapper's environment. Set what
+you need explicitly inside the script.
+
+**Security.** When `auth_script` is read from a profile config (rather
+than passed on the CLI) the wrapper logs a `WARNING` at startup.
+Anyone with write access to your config file could otherwise plant a
+script that runs under `sudo` during connect — the warning gives you
+a chance to notice. CLI-supplied paths skip the warning since they're
+an explicit one-shot opt-in.

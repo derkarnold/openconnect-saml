@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **External authentication script (`--auth-script PATH`, also a
+  per-profile `auth_script` field).** When set, the wrapper hands
+  the SAML phase off to your script: the script gets
+  `<login_url> <token_cookie_name> <username>` on argv with the
+  password on stdin, must print the SSO token to stdout, and gets
+  `--timeout` seconds to do so. Useful for IdPs the built-in
+  scripted flow can't drive (in-house SSO, ADFS / WS-Trust, bespoke
+  MFA). The subprocess only inherits `PATH` and `HOME` — anything
+  else has to be set explicitly inside the script. When `auth_script`
+  is read from a profile config (vs CLI) the wrapper logs a
+  `WARNING` so a malicious config edit can't silently inject
+  code-execution under sudo. Thanks @derkarnold for #29.
+
 ## [0.22.5] – 2026-05-05
 
 ### Diagnostic

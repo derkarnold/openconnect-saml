@@ -32,6 +32,7 @@ class Authenticator:
         window_height=600,
         verify_tls=True,
         allowed_hosts=None,
+        auth_script=None,
     ):
         self.host = host
         self.proxy = proxy
@@ -43,6 +44,7 @@ class Authenticator:
         self.window_height = window_height
         self.verify_tls = verify_tls
         self.allowed_hosts = allowed_hosts
+        self.auth_script = auth_script
         self.session = create_http_session(
             proxy, version, ssl_legacy=ssl_legacy, verify_tls=verify_tls
         )
@@ -128,6 +130,7 @@ class Authenticator:
                 timeout=self.timeout,
                 allowed_hosts=getattr(self, "allowed_hosts", None),
                 verify_tls=getattr(self, "verify_tls", True),
+                auth_script=getattr(self, "auth_script", None),
             )
             return await headless.authenticate(auth_request_response)
 

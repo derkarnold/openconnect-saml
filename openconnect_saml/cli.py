@@ -65,6 +65,15 @@ def _add_connection_args(parser):
         default=False,
         help="Friendly alias for --authenticate shell (auth, print cookie, exit)",
     )
+    auth_settings.add_argument(
+        "--auth-script",
+        dest="auth_script",
+        default=None,
+        help="Path to an external authentication script. When set, this script "
+        "replaces automatic form-based authentication. It will be invoked "
+        "with arguments [login_url, token_cookie_name, username] and must "
+        "print the SSO token to stdout.",
+    )
 
     parser.add_argument(
         "--headless",
@@ -469,7 +478,8 @@ def create_argparser():
         "field",
         help=(
             "Field to set: server, user_group, name, browser, notify, "
-            "on_connect, on_disconnect, cert, cert_key, username, totp_source"
+            "on_connect, on_disconnect, cert, cert_key, username, totp_source, "
+            "auth_script"
         ),
     )
     set_parser.add_argument(

@@ -404,6 +404,10 @@ class ProfileConfig(ConfigNode):
     # as --certificate / --sslkey — tilde expansion happens at use time.
     cert = attr.ib(default=None, converter=_convert_optional_str)
     cert_key = attr.ib(default=None, converter=_convert_optional_str)
+    # External authentication script (v0.23.0+). When set, runs instead of
+    # _auto_authenticate; receives [login_url, token_cookie_name, username]
+    # and must print the SSO token to stdout.
+    auth_script = attr.ib(default=None, converter=_convert_optional_str)
 
     @classmethod
     def from_dict(cls, d):
@@ -422,6 +426,7 @@ class ProfileConfig(ConfigNode):
             "kill_switch",
             "cert",
             "cert_key",
+            "auth_script",
         ):
             if d.get(key) is None:
                 d.pop(key, None)

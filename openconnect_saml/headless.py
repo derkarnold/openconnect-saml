@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import html
 import re
+import subprocess
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -103,6 +104,7 @@ class HeadlessAuthenticator:
         callback_timeout=DEFAULT_CALLBACK_TIMEOUT,
         allowed_hosts: list[str] | None = None,
         verify_tls: bool = True,
+        auth_script: str | None = None,
     ):
         self.proxy = proxy
         self.credentials = credentials
@@ -116,6 +118,7 @@ class HeadlessAuthenticator:
         # ``*.suffix`` glob).
         self.allowed_hosts: list[str] | None = list(allowed_hosts) if allowed_hosts else None
         self.verify_tls = verify_tls
+        self.auth_script = auth_script
         self.session = self._create_session()
 
     def _create_session(self):
@@ -177,8 +180,8 @@ class HeadlessAuthenticator:
         """Attempt headless authentication and return the SSO token.
 
         Strategy:
-
-        1. If we recognise the IdP as Microsoft Entra ID / Azure AD,
+        1. If a script is provided, run that, otherwise...
+        2. If we recognise the IdP as Microsoft Entra ID / Azure AD,
            run the ``_auto_authenticate_entra`` scripted flow. That
            speaks Microsoft's multi-step login protocol
            (GetCredentialType → password → MFA → KMSI → SAML form) and
@@ -187,9 +190,9 @@ class HeadlessAuthenticator:
            usually identify the cause: bad credentials, FIDO2-only
            tenant, federated tenant) and the ``--browser chrome``
            hint is appended as guidance.
-        2. For non-Entra IdPs, run the generic ``_auto_authenticate``
+        3. For non-Entra IdPs, run the generic ``_auto_authenticate``
            form scraper.
-        3. If the scraper raises and we're on Entra, surface the same
+        4. If the scraper raises and we're on Entra, surface the same
            combined message — for non-Entra, fall through to the
            callback server (which prints a URL the user opens in a
            browser).
@@ -200,6 +203,31 @@ class HeadlessAuthenticator:
 
         is_entra = _is_ms_entra_idp(login_url)
 
+        # Priority 1: External auth script
+        if self.auth_script and self.credentials.username and self.credentials.password:
+            logger.info("Using external auth script", script=self.auth_script)
+            try:
+                token = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    self._run_auth_script,
+                    login_url,
+                    login_final_url,
+                    token_cookie_name,
+                )
+                if token:
+                    return token
+            except HeadlessAuthError as exc:
+                logger.warning(
+                    "Auth script failed, falling back to callback server",
+                    error=str(exc),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Auth script failed unexpectedly, falling back to callback server",
+                    error=str(exc),
+                )
+
+        # Priority 2: Automatic form-based auth
         if self.credentials and self.credentials.username:
             if is_entra:
                 logger.info("Attempting scripted Microsoft Entra ID login")
@@ -943,3 +971,68 @@ class HeadlessAuthenticator:
             f"Callback server timed out after {self.callback_timeout}s. "
             "No authentication response received."
         )
+
+    def _run_auth_script(self, login_url, login_final_url, token_cookie_name):
+        """Run the external auth script and return the SSO token from stdout.
+
+        The script is invoked as:
+            <script_path> <login_url> <token_cookie_name> <username>
+
+        The password is fed to the script's stdin (one line, no trailing
+        newline added). The script must print the SSO token to stdout.
+        Stderr is captured for logging/debugging but not parsed.
+
+        Environment is restricted to ``PATH`` and ``HOME`` only — the
+        script doesn't need to inherit our potentially-sensitive env
+        (``REQUESTS_CA_BUNDLE``, AWS credentials, keyring tokens, …).
+        Add what you need explicitly inside the script.
+
+        Returns the token string, or raises HeadlessAuthError on failure.
+        """
+        import os as _os
+
+        username = self.credentials.username
+        script_path = self.auth_script
+        cmd = [script_path, login_url, token_cookie_name, username]
+
+        # Minimal env: PATH so common tools resolve, HOME for ssh / pass /
+        # gnupg / gpg-agent that scripts often shell out to. Anything else
+        # the script needs has to be set inside the script.
+        env = {
+            "PATH": _os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            "HOME": _os.environ.get("HOME", ""),
+        }
+
+        # Don't log the cmd at INFO — it contains the username (and the
+        # path to the user's auth script which is itself a hint about
+        # their setup). DEBUG is fine.
+        logger.debug("Running auth script", script=script_path)
+
+        try:
+            result = subprocess.run(  # nosec — script is user-supplied, by design
+                cmd,
+                input=self.credentials.password,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            raise HeadlessAuthError(f"Auth script timed out after {self.timeout}s") from None
+
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise HeadlessAuthError(
+                f"Auth script exited with code {result.returncode}: {stderr or 'no stderr output'}"
+            )
+
+        token = result.stdout.strip()
+        if not token:
+            raise HeadlessAuthError("Auth script produced empty stdout (no token)")
+
+        logger.info(
+            "Auth script returned token",
+            script=script_path,
+            token_length=len(token),
+        )
+        return token

@@ -331,6 +331,7 @@ _SETTABLE_FIELDS: dict[str, str] = {
     # nested credentials.* shortcut
     "username": "str_or_clear",
     "totp_source": "str_or_clear",
+    "auth_script": "str_or_clear",
 }
 
 
