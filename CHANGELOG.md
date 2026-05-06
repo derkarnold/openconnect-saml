@@ -7,12 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.24.0] – 2026-05-06
 
-This release lands the foundation of the v1.0 prep work — docs
-site, contributor docs, a coverage push, two new auth/TOTP
-backends — but ships as a minor bump rather than as v1.0. The
-v1.0 stability promise (`docs/v1-roadmap.md`) waits on real-world
-validation of the ADFS / WS-Trust path and packager interest in
-the API freeze.
+A maintenance + features release: two new authentication
+backends (KeePassXC TOTP, experimental ADFS / WS-Trust scripted
+flow), an mkdocs-material site, contributor docs (CONTRIBUTING,
+CODE_OF_CONDUCT), a CHANGELOG backfill of older releases, a
+coverage push from 60% to 76%, plus pre-commit and Dependabot
+plumbing. No breaking changes.
 
 ### Added
 

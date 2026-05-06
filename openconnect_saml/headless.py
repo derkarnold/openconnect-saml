@@ -490,7 +490,7 @@ class HeadlessAuthenticator:
             # Federated tenant — route through ADFS / WS-Trust 2005.
             # Returns the response we should treat as if it had come
             # straight from the password POST (i.e. the next page in
-            # the main flow). v1.0: experimental; logs a warning.
+            # the main flow). Experimental; logs a warning.
             logger.warning(
                 "Federated MS Entra tenant detected — using experimental "
                 "WS-Trust flow. If it fails, fall back to '--browser chrome'.",

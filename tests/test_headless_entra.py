@@ -138,10 +138,10 @@ class TestEntraGuardrails:
 class TestEntraCredentialTypeFork:
     def test_federated_tenant_routes_through_ws_trust(self):
         """Tenant federated to ADFS — ``GetCredentialType`` returns a
-        ``FederationRedirectUrl``, and the v1.0 path follows WS-Trust.
-        Here we only verify the federated branch *invokes* WS-Trust
-        rather than bailing the way pre-v1.0 versions did. End-to-end
-        WS-Trust coverage is in ``TestWsTrustFlow`` below.
+        ``FederationRedirectUrl``, and the federated path follows
+        WS-Trust. Here we only verify the federated branch *invokes*
+        WS-Trust rather than bailing the way earlier versions did.
+        End-to-end WS-Trust coverage is in ``TestWsTrustFlow`` below.
         """
         auth = _make_authenticator()
         called = {}
