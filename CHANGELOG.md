@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — staging for v1.0
+## [0.24.0] – 2026-05-06
+
+This release lands the foundation of the v1.0 prep work — docs
+site, contributor docs, a coverage push, two new auth/TOTP
+backends — but ships as a minor bump rather than as v1.0. The
+v1.0 stability promise (`docs/v1-roadmap.md`) waits on real-world
+validation of the ADFS / WS-Trust path and packager interest in
+the API freeze.
 
 ### Added
 
@@ -58,14 +65,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Coverage exclusions for `gui.py`, `interactive_tui.py`,
   `browser/browser.py`, `browser/chrome.py` (Qt / Playwright code
   that can't honestly run in CI). Baseline rises from 60.65% to
-  69.84%, floor raised from 50 to 68.
-- New `test_headless_entra.py` (9 cases) covering the scripted
+  76.25% across five focused rounds; floor raised from 50 to 75.
+- `test_headless_entra.py` (18 cases) covering the scripted
   Microsoft Entra flow: guardrails, federated / passwordless
-  forks, happy path, wrong-password, unscriptable MFA branch.
-- `test_tui.py` extended (+17 cases) covering format helpers,
-  `_augment_with_rate`, `_find_vpn_process`, `_print_status_json`,
-  `_plain_output`, `_check_killswitch_active`.
+  forks, happy path, wrong-password, unscriptable MFA branch,
+  WS-Trust SOAP envelope shape, end-to-end mocked WS-Trust flow.
 - `test_keepassxc.py` (12 cases) for the new TOTP provider.
+- `test_app_helpers.py` + `test_killswitch_helpers.py` (44 cases)
+  for `_validate_hook_command`, hook handlers, logger config,
+  killswitch platform / backend / IP-resolution helpers.
+- `test_cli_handlers.py` (24 cases) for the small subcommand
+  handlers (`disconnect`, `sessions`, `run`, plus the missing
+  groups branches).
+- `test_setup_wizard.py` extended (+16 cases): EOF / ^C interrupt
+  branches, AnyConnect XML scan/import, 1Password + pass +
+  advanced-mode wizard branches.
+- `test_tui.py` extended (+39 cases) covering format helpers,
+  `_augment_with_rate`, `_find_vpn_process`, `_print_status_json`,
+  `_plain_output`, `_check_killswitch_active`, interface helpers
+  (`_get_vpn_interface`, `_get_interface_ip`),
+  `_collect_all_statuses`, the rich renderer, and the watch loop.
 - `.pre-commit-config.yaml` with ruff + EOL/whitespace hygiene
   (opt-in via `pre-commit install`).
 - Dependabot watching pip + GitHub Actions weekly; pytest+ruff
