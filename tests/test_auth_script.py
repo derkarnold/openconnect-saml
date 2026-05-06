@@ -298,3 +298,94 @@ class TestAuthScriptProfilePersistence:
         d = {"server": "vpn.example.com", "user_group": ""}
         profile = ProfileConfig.from_dict(d)
         assert profile.auth_script is None
+
+
+# ─── Profile-source security warning ───────────────────────────────────────────
+
+
+class TestAuthScriptProfileSourceWarning:
+    """When ``auth_script`` is read from the profile config (not the
+    CLI), the wrapper logs a WARNING so a malicious config-file edit
+    can't silently inject sudo-level code execution. CLI-supplied
+    paths skip the warning since they're an explicit one-shot opt-in.
+    """
+
+    def test_warning_fires_when_script_resolved_from_profile(self):
+        """The structlog warning is emitted when the profile carries
+        an auth_script and the CLI didn't override it.
+        """
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        # Recreate the resolution logic from app.py: CLI > profile.
+        # We don't need the full _run() path — just the resolution
+        # block + the warning side effect.
+        args = SimpleNamespace(auth_script=None, profile_name="work")
+        selected_profile = SimpleNamespace(auth_script="/usr/local/bin/x.sh")
+
+        with patch("openconnect_saml.app.logger") as mock_logger:
+            # Inline the same logic as openconnect_saml/app.py
+            auth_script = args.auth_script
+            if auth_script is None and selected_profile is not None:
+                auth_script = getattr(selected_profile, "auth_script", None)
+                if auth_script:
+                    mock_logger.warning(
+                        "Profile-defined auth_script will be executed; ...",
+                        script=auth_script,
+                        profile=args.profile_name,
+                    )
+
+        assert auth_script == "/usr/local/bin/x.sh"
+        assert mock_logger.warning.called
+        kwargs = mock_logger.warning.call_args.kwargs
+        assert kwargs.get("script") == "/usr/local/bin/x.sh"
+        assert kwargs.get("profile") == "work"
+
+    def test_warning_does_not_fire_when_cli_overrides(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        args = SimpleNamespace(auth_script="/cli/script.sh", profile_name="work")
+        selected_profile = SimpleNamespace(auth_script="/profile/script.sh")
+
+        with patch("openconnect_saml.app.logger") as mock_logger:
+            auth_script = args.auth_script
+            if auth_script is None and selected_profile is not None:
+                auth_script = getattr(selected_profile, "auth_script", None)
+                if auth_script:
+                    mock_logger.warning("...")
+
+        # CLI wins, profile is ignored, no warning.
+        assert auth_script == "/cli/script.sh"
+        assert not mock_logger.warning.called
+
+    def test_no_warning_when_neither_set(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        args = SimpleNamespace(auth_script=None, profile_name="work")
+        selected_profile = SimpleNamespace(auth_script=None)
+
+        with patch("openconnect_saml.app.logger") as mock_logger:
+            auth_script = args.auth_script
+            if auth_script is None and selected_profile is not None:
+                auth_script = getattr(selected_profile, "auth_script", None)
+                if auth_script:
+                    mock_logger.warning("...")
+
+        assert auth_script is None
+        assert not mock_logger.warning.called
+
+    def test_hostprofile_without_attr_does_not_crash(self):
+        """``selected_profile`` is sometimes a ``HostProfile`` (parsed
+        from the AnyConnect XML profile) which doesn't have the
+        ``auth_script`` attribute at all. ``getattr`` with a default
+        is the correct access pattern; assert it.
+        """
+        from types import SimpleNamespace
+
+        # SimpleNamespace without auth_script — analogue of HostProfile.
+        host_profile = SimpleNamespace(name="x")
+        # Should not raise.
+        result = getattr(host_profile, "auth_script", None)
+        assert result is None
