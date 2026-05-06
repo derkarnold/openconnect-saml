@@ -885,14 +885,139 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   event/duration). Pass `--no-history` or set `connection_history =
   false` in config to disable.
 
-## [0.7.1] – 2026-02-18
+## [0.7.1] – 2026-04-14
 
 ### Fixed
 
-- Various small improvements.
+- The auth-target-URL probe (initial GET to discover redirects) used
+  the AnyConnect-headered session, which some Cisco entry hosts
+  reject with `404`. Switched to a plain `requests.Session` for that
+  one probe — the AnyConnect headers come back for the real auth
+  POST. Restores connect on gateways like Hungarian universities.
+- AUR publish workflow rewritten end-to-end after multiple
+  KSXGitHub-action regressions: direct `git push` instead of the
+  third-party action, `--nosign` PKGBUILD, generates+commits
+  `.SRCINFO` in the same atomic commit as the PKGBUILD bump,
+  explicit git author config, no-op when nothing changed.
 
-## [0.6.0] – 2024-01-01
+## [0.7.0] – 2026-04-14
 
-Initial public release of the maintained fork, combining features from
-[vlaci/openconnect-sso](https://github.com/vlaci/openconnect-sso) and
-[kowyo/openconnect-lite](https://github.com/kowyo/openconnect-lite).
+### Added
+
+- **`--useragent UA`** for `openconnect`'s outgoing connection. Some
+  gateways gate access on UA string; this lets you spoof one without
+  patching the wrapper.
+
+## [0.6.1] – 2026-03-31
+
+### Security
+
+- Comprehensive second-pass audit (#10) covering credential handling,
+  XML parsing, subprocess invocation, and TLS verification paths.
+
+### Fixed
+
+- Removed the duplicate PyPI publish step from `release.yml` —
+  `publish.yml` is the canonical PyPI workflow, so the duplicate was
+  racing and occasionally double-publishing.
+
+## [0.6.0] – 2026-03-31
+
+### Added
+
+- **Split-tunnel routing**: `--route CIDR` (include) and `--no-route
+  CIDR` (exclude) on top of openconnect's own routing. Useful when
+  you want only the corporate /16 to go through the VPN and DNS to
+  stay local.
+- **Bitwarden TOTP provider** (`--totp-source bitwarden`,
+  `--bw-item-id UUID`) via the `bw` CLI.
+- **Desktop notifications** for connect/disconnect events via
+  `notify-send` (Linux) / `osascript` (macOS) / Windows-toast.
+- **`setup` wizard** — interactive first-run flow that walks the
+  user through profile creation, credential storage, browser pick,
+  TOTP provider, etc. The output gets written to the standard
+  config file so subsequent `connect` runs are zero-arg.
+- Misc security fixes from the (#9) audit pass.
+
+## [0.5.0] – 2026-03-31
+
+### Added
+
+- **Multi-profile support** — `profiles add/list/show/remove`
+  subcommands, `connect <profile-name>`, profile-specific config
+  overrides. Replaces the single-server-per-config assumption.
+- **Connection TUI** — live status display via `openconnect-saml
+  status` (uptime, traffic, server, IP). `--watch` mode for
+  refreshing display.
+- **Shell completion** for bash / zsh / fish via `openconnect-saml
+  completion`. Installed by default in the AUR package.
+
+## [0.4.0] – 2026-03-31
+
+### Added
+
+- **2FAuth TOTP provider** (`--totp-source 2fauth`, `--2fauth-url`,
+  `--2fauth-token`, `--2fauth-account-id`) — fetches the live OTP
+  from a self-hosted [2FAuth](https://docs.2fauth.app/) instance via
+  its REST API. Useful when you want TOTP centralised across
+  devices without giving keyring access on each machine.
+
+## [0.3.0] – 2026-03-31
+
+### Added
+
+- **`--browser chrome`** — Playwright-driven Chromium backend, runs
+  headless without a DISPLAY. Provides the first FIDO2 / hardware
+  key path that actually works in this wrapper.
+- **`service` subcommand** — install/start/stop/status/logs for a
+  systemd user-unit so the VPN can come up at login.
+- **Auto-reconnect** (`--reconnect` / `--max-retries N`) — supervises
+  the openconnect subprocess and reconnects with backoff when it
+  drops.
+- **FIDO2 / Yubikey support** (`[fido2]` extra, `python-fido2`).
+  Only effective in browser modes that surface WebAuthn (Qt 6.7+,
+  Chrome).
+
+### Docs
+
+- Modernised README — badges, feature table, collapsible sections,
+  migration guide from `openconnect-sso`.
+
+## [0.2.0] – 2026-03-31
+
+### Added
+
+- **Headless / CLI mode** (`--headless` / `--browser headless`) —
+  no Qt, no Chromium, no DISPLAY needed. Drives the SAML form via
+  `requests` + `lxml`. Falls back to a localhost callback server
+  when scripted form-fill can't satisfy the IdP. Makes PyQt6 truly
+  optional via a `[gui]` extra.
+
+### Fixed
+
+- Skip platform-specific tests on Windows that depended on POSIX-only
+  modules (`termios`, `fcntl`, …).
+
+## [0.1.1] – 2026-03-30
+
+### CI
+
+- Final security review and CI/CD pipeline pass (#4): integration
+  tests run on Linux + macOS, switched lint/install plumbing to
+  the standard `pip` flow, Linux jobs install `libegl1` for the
+  PyQt6 import-time check.
+
+## [0.1.0] – 2026-03-30
+
+Initial public release of the maintained fork.
+
+### Foundation
+
+- Combines features from
+  [vlaci/openconnect-sso](https://github.com/vlaci/openconnect-sso)
+  and [kowyo/openconnect-lite](https://github.com/kowyo/openconnect-lite).
+- Initial SSL legacy renegotiation support, robust TOTP handling,
+  better error messages, configurable timeouts, on-connect scripts,
+  window-size config (#1, #2, #3).
+- AUR PKGBUILD ships from day one.
+- Published to PyPI as `openconnect-saml`.
