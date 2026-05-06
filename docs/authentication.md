@@ -148,7 +148,7 @@ totp_source = "pass"
 
 Requires: `pass`, `pass-otp`, an unlocked GPG agent.
 
-## FIDO2 / hardware security keys
+## FIDO2 hardware security keys
 
 Hardware-key support for WebAuthn challenges (Yubikey, Nitrokey,
 SoloKey, etc.):

@@ -65,7 +65,10 @@ plumbing. No breaking changes.
 - Coverage exclusions for `gui.py`, `interactive_tui.py`,
   `browser/browser.py`, `browser/chrome.py` (Qt / Playwright code
   that can't honestly run in CI). Baseline rises from 60.65% to
-  76.25% across five focused rounds; floor raised from 50 to 75.
+  76.25% on Linux across five focused rounds; floor raised from
+  50 to 73 (the cross-platform minimum — Windows lands ~3 points
+  lower because `killswitch.py`'s iptables/pf code and a few
+  `pgrep`/`/proc` paths can't run there).
 - `test_headless_entra.py` (18 cases) covering the scripted
   Microsoft Entra flow: guardrails, federated / passwordless
   forks, happy path, wrong-password, unscriptable MFA branch,

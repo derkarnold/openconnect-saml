@@ -317,6 +317,7 @@ class TestWsTrustFlow:
         auth = _make_authenticator()
         wst_rstr = MagicMock()
         wst_rstr.content = _ws_trust_rstr_with_assertion()
+        wst_rstr.status_code = 200
         wst_rstr.raise_for_status = MagicMock()
 
         # 1. realm-discovery JSON
@@ -385,6 +386,7 @@ class TestWsTrustFlow:
         auth = _make_authenticator()
         fault = MagicMock()
         fault.content = _ws_trust_soap_fault(reason="Authentication failed")
+        fault.status_code = 200
         fault.raise_for_status = MagicMock()
         auth.session.get.side_effect = _sequence(
             _resp(
@@ -405,6 +407,7 @@ class TestWsTrustFlow:
         auth = _make_authenticator()
         garbled = MagicMock()
         garbled.content = b"not even xml"
+        garbled.status_code = 200
         garbled.raise_for_status = MagicMock()
         auth.session.get.side_effect = _sequence(
             _resp(
@@ -453,3 +456,73 @@ class TestWsTrustEnvelope:
             username="alice", password='p<>"&w', ws_trust_url="https://x"
         )
         assert "<o:Password>p&lt;&gt;&quot;&amp;w</o:Password>" in env
+
+    def test_envelope_escapes_ws_trust_url_in_addressing_to(self):
+        """The realm-discovery response is server-controlled — a
+        hostile / malformed AuthURL must not break out of the
+        ``<a:To>`` element or inject siblings."""
+        hostile = 'https://x"><evil>injected</evil><x="'
+        env = HeadlessAuthenticator._ws_trust_soap_envelope(
+            username="u", password="p", ws_trust_url=hostile
+        )
+        # Raw substring with '"' / '<' must not appear inside <a:To>.
+        assert "<evil>" not in env
+        # Escaped form is what actually gets emitted.
+        assert "&lt;evil&gt;" in env
+
+
+class TestWsTrustHardening:
+    """Coverage for the HTTPS-enforcement, redirect-rejection and
+    URL-encoding guardrails on the WS-Trust path."""
+
+    def test_realm_discovery_url_encodes_login(self):
+        """A ``+`` in an email alias must survive intact (raw ``+`` is
+        decoded as space by HTTP servers)."""
+        auth = _make_authenticator()
+        auth.session.get.side_effect = _sequence(
+            _resp(json_body={"AuthURL": "https://login.microsoftonline.com/x"}),
+        )
+        wst_rstr = MagicMock()
+        wst_rstr.content = _ws_trust_rstr_with_assertion()
+        wst_rstr.status_code = 200
+        wst_rstr.raise_for_status = MagicMock()
+        auth.session.post.side_effect = _sequence(
+            wst_rstr, _resp("ok", url="https://login.microsoftonline.com/login.srf")
+        )
+        auth._authenticate_via_ws_trust(
+            username="alice+vpn@example.com",
+            password="p",
+            user_realm_login="alice+vpn@example.com",
+        )
+        first_call = auth.session.get.call_args_list[0]
+        called_url = first_call.args[0] if first_call.args else first_call.kwargs.get("url", "")
+        # ``+`` in the login must be percent-encoded (``%2B``), not left raw.
+        assert "alice%2Bvpn%40example.com" in called_url
+        assert "alice+vpn@example.com" not in called_url
+
+    def test_non_https_authurl_refused(self):
+        """Realm-discovery returning an http:// URL must abort before
+        the WS-Trust POST goes out."""
+        auth = _make_authenticator()
+        auth.session.get.side_effect = _sequence(
+            _resp(json_body={"AuthURL": "http://adfs.contoso.com/usernamemixed"}),
+        )
+        with pytest.raises(HeadlessAuthError, match="not HTTPS"):
+            auth._authenticate_via_ws_trust(username="x", password="y", user_realm_login="x")
+        # Credentials never POSTed.
+        assert auth.session.post.call_count == 0
+
+    def test_ws_trust_redirect_response_refused(self):
+        """If the WS-Trust endpoint returns a 30x, refuse to follow —
+        we don't want to re-POST credentials to an arbitrary target."""
+        auth = _make_authenticator()
+        auth.session.get.side_effect = _sequence(
+            _resp(json_body={"AuthURL": "https://adfs.contoso.com/usernamemixed"}),
+        )
+        redirect = MagicMock()
+        redirect.status_code = 302
+        redirect.headers = {"Location": "https://attacker.example/steal"}
+        redirect.raise_for_status = MagicMock()
+        auth.session.post.side_effect = _sequence(redirect)
+        with pytest.raises(HeadlessAuthError, match="redirect"):
+            auth._authenticate_via_ws_trust(username="x", password="y", user_realm_login="x")

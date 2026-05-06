@@ -472,7 +472,7 @@ class PassProvider(TotpProvider):
 
 
 class KeePassXCProvider(TotpProvider):
-    """Fetch TOTP from a KeePassXC database via ``keepassxc-cli show -t``.
+    """Fetch TOTP from a KeePassXC database via ``keepassxc-cli show -s -a TOTP``.
 
     Requires the ``keepassxc-cli`` binary (ships with KeePassXC).
     The database password is read from stdin so it doesn't appear

@@ -336,11 +336,11 @@ class TestPlainOutput:
     def test_no_color_env_forces_plain(self, monkeypatch):
         from openconnect_saml.tui import _plain_output
 
+        # NO_COLOR set + stdout looks like a TTY → still must return
+        # True because the env var unconditionally forces plain.
         monkeypatch.setenv("NO_COLOR", "1")
-        # Either rich is missing (returns True) or NO_COLOR is honoured.
-        # The former happens in CI where rich isn't installed; the
-        # latter happens here where it might be.
-        assert _plain_output() is True or _plain_output() is False
+        with patch("sys.stdout.isatty", return_value=True):
+            assert _plain_output() is True
 
     def test_no_tty_forces_plain(self, monkeypatch):
         from openconnect_saml.tui import _plain_output

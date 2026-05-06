@@ -20,7 +20,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import TYPE_CHECKING
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import parse_qs, quote_plus, urljoin, urlparse
 
 import requests
 import structlog
@@ -724,9 +724,12 @@ class HeadlessAuthenticator:
         """
         # 1. Realm discovery — tells us where the WS-Trust endpoint
         # lives. Returns JSON with ``AuthURL`` (WS-Trust 2005),
-        # ``federation_protocol``, etc.
+        # ``federation_protocol``, etc. ``user_realm_login`` is
+        # URL-encoded so a ``+`` in an email alias survives intact
+        # (raw ``+`` would be decoded as space by the server).
         realm_url = (
-            f"https://login.microsoftonline.com/getuserrealm.srf?login={user_realm_login}&xml=0"
+            "https://login.microsoftonline.com/getuserrealm.srf?"
+            f"login={quote_plus(user_realm_login)}&xml=0"
         )
         if not self._host_allowed(realm_url):
             raise HeadlessAuthError(
@@ -742,6 +745,14 @@ class HeadlessAuthenticator:
                 "Realm-discovery did not return a WS-Trust AuthURL — "
                 "tenant federation config may be unusual."
             )
+        # Reject anything but HTTPS — credentials are about to leave
+        # the process and we won't send them in cleartext even if the
+        # IdP is misconfigured.
+        if urlparse(ws_trust_url).scheme != "https":
+            raise HeadlessAuthError(
+                f"WS-Trust AuthURL {ws_trust_url!r} is not HTTPS; "
+                "refusing to send credentials over an unencrypted channel."
+            )
         if not self._host_allowed(ws_trust_url):
             raise HeadlessAuthError(
                 f"WS-Trust endpoint host {urlparse(ws_trust_url).hostname!r} "
@@ -750,7 +761,12 @@ class HeadlessAuthenticator:
             )
 
         # 2. Build + POST SOAP envelope. ADFS validates user/pwd and
-        # returns a SAML 1.1 assertion wrapped in an RSTR.
+        # returns a SAML 1.1 assertion wrapped in an RSTR. We disable
+        # automatic redirect-following on this leg specifically: any
+        # 30x response would re-POST the credentials to the redirect
+        # target, and we don't want to authorise that destination
+        # implicitly. If a redirect is required, the IdP needs to be
+        # configured to point ``AuthURL`` at the final endpoint.
         soap_body = self._ws_trust_soap_envelope(
             username=username,
             password=password,
@@ -764,7 +780,13 @@ class HeadlessAuthenticator:
                 "SOAPAction": ("http://docs.oasis-open.org/ws-sx/ws-trust/200512/RST/Issue"),
             },
             timeout=self.timeout,
+            allow_redirects=False,
         )
+        if 300 <= wst_resp.status_code < 400:
+            raise HeadlessAuthError(
+                f"WS-Trust endpoint returned a {wst_resp.status_code} redirect; "
+                "refusing to follow because credentials were just POSTed."
+            )
         wst_resp.raise_for_status()
 
         # 3. Extract the SAML 1.1 assertion (xml fragment).
@@ -819,6 +841,10 @@ class HeadlessAuthenticator:
         msg_id = f"urn:uuid:{uuid.uuid4()}"
         u = html_mod.escape(username)
         p = html_mod.escape(password)
+        # The realm-discovery response is server-controlled; XML-escape
+        # it before splicing into ``<a:To>`` so a hostile / malformed
+        # URL can't break out of the attribute or inject extra elements.
+        addr_to = html_mod.escape(ws_trust_url, quote=True)
         return (
             '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope" '
             'xmlns:a="http://www.w3.org/2005/08/addressing" '
@@ -831,7 +857,7 @@ class HeadlessAuthenticator:
             f"<a:MessageID>{msg_id}</a:MessageID>"
             "<a:ReplyTo><a:Address>http://www.w3.org/2005/08/addressing/anonymous"
             "</a:Address></a:ReplyTo>"
-            f'<a:To s:mustUnderstand="1">{ws_trust_url}</a:To>'
+            f'<a:To s:mustUnderstand="1">{addr_to}</a:To>'
             '<o:Security s:mustUnderstand="1">'
             "<o:UsernameToken>"
             f"<o:Username>{u}</o:Username>"
