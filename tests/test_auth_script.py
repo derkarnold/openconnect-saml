@@ -35,7 +35,6 @@ def mock_auth_response():
 @pytest.fixture
 def headless_auth_with_script(mock_credentials):
     return HeadlessAuthenticator(
-
         credentials=mock_credentials,
         timeout=5,
         callback_timeout=5,
@@ -87,7 +86,14 @@ class TestRunAuthScriptExecution:
             ]
             assert call_args[1]["capture_output"] is True
             assert call_args[1]["text"] is True
-            assert call_args[1]["timeout"] == 30
+            # Script-runner uses the authenticator's configurable timeout
+            # (set via fixture to 5s) rather than the previous hardcoded 30s.
+            assert call_args[1]["timeout"] == 5
+            # Subprocess env is restricted to PATH + HOME — the script
+            # explicitly does not inherit our REQUESTS_CA_BUNDLE / AWS keys
+            # / keyring tokens etc.
+            env = call_args[1]["env"]
+            assert set(env.keys()) == {"PATH", "HOME"}
 
     def test_script_falls_back_on_nonzero_exit(self, headless_auth_with_script, mock_auth_response):
         """Test that a non-zero exit code raises HeadlessAuthError."""

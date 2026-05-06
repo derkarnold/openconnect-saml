@@ -180,7 +180,7 @@ class HeadlessAuthenticator:
         """Attempt headless authentication and return the SSO token.
 
         Strategy:
-        1. If an script is provided, run that, otherwise...
+        1. If a script is provided, run that, otherwise...
         2. If we recognise the IdP as Microsoft Entra ID / Azure AD,
            run the ``_auto_authenticate_entra`` scripted flow. That
            speaks Microsoft's multi-step login protocol
@@ -978,31 +978,47 @@ class HeadlessAuthenticator:
         The script is invoked as:
             <script_path> <login_url> <token_cookie_name> <username>
 
-        The script must print the SSO token to stdout.
+        The password is fed to the script's stdin (one line, no trailing
+        newline added). The script must print the SSO token to stdout.
         Stderr is captured for logging/debugging but not parsed.
+
+        Environment is restricted to ``PATH`` and ``HOME`` only — the
+        script doesn't need to inherit our potentially-sensitive env
+        (``REQUESTS_CA_BUNDLE``, AWS credentials, keyring tokens, …).
+        Add what you need explicitly inside the script.
 
         Returns the token string, or raises HeadlessAuthError on failure.
         """
+        import os as _os
 
         username = self.credentials.username
         script_path = self.auth_script
         cmd = [script_path, login_url, token_cookie_name, username]
 
-        logger.debug(
-            "Running auth script",
-            cmd=cmd,
-        )
+        # Minimal env: PATH so common tools resolve, HOME for ssh / pass /
+        # gnupg / gpg-agent that scripts often shell out to. Anything else
+        # the script needs has to be set inside the script.
+        env = {
+            "PATH": _os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            "HOME": _os.environ.get("HOME", ""),
+        }
+
+        # Don't log the cmd at INFO — it contains the username (and the
+        # path to the user's auth script which is itself a hint about
+        # their setup). DEBUG is fine.
+        logger.debug("Running auth script", script=script_path)
 
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # nosec — script is user-supplied, by design
                 cmd,
                 input=self.credentials.password,
                 capture_output=True,
                 text=True,
-                timeout=30,  # 30-second timeout
+                timeout=self.timeout,
+                env=env,
             )
         except subprocess.TimeoutExpired:
-            raise HeadlessAuthError("Auth script timed out after 30s") from None
+            raise HeadlessAuthError(f"Auth script timed out after {self.timeout}s") from None
 
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()

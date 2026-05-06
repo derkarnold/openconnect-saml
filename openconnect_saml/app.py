@@ -677,12 +677,31 @@ async def _run(args, cfg):
     if allowed_hosts_raw:
         allowed_hosts = [h.strip() for h in allowed_hosts_raw.split(",") if h.strip()]
 
-    # Resolve auth_script: CLI > profile > None (use auto-auth)
+    # Resolve auth_script: CLI > profile > None (use auto-auth).
+    #
+    # Loud warning when the path comes from a profile rather than the
+    # CLI: anyone who can write to ``~/.config/openconnect-saml/config.toml``
+    # could otherwise plant an ``auth_script`` pointing at an arbitrary
+    # binary that we'd then execute under sudo. The warning gives the
+    # operator a chance to notice. CLI-supplied paths skip the warning
+    # because they're an explicit one-shot opt-in by the user.
     auth_script = getattr(args, "auth_script", None)
     if auth_script is None and selected_profile is not None:
-        auth_script = (
-            selected_profile.auth_script if hasattr(selected_profile, "auth_script") else None
-        )
+        # ``selected_profile`` is a ``HostProfile`` (parsed from the
+        # AnyConnect XML profile), not a ``ProfileConfig`` — only the
+        # latter exposes ``auth_script``. The CLI / setup-wizard ones
+        # are ``ProfileConfig``, which is why ``getattr`` is the safe
+        # access pattern here.
+        auth_script = getattr(selected_profile, "auth_script", None)
+        if auth_script:
+            logger.warning(
+                "Profile-defined auth_script will be executed; if your "
+                "profile config is shared / writable by others, this is "
+                "a code-execution surface. Pass --auth-script on the "
+                "command line to suppress this warning.",
+                script=auth_script,
+                profile=getattr(args, "profile_name", None),
+            )
 
     auth_response = await authenticate_to(
         selected_profile,
