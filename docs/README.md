@@ -1,8 +1,9 @@
 # Documentation
 
 Detailed reference for `openconnect-saml`. The top-level
-[README](../README.md) covers a quick install + the most common
-flows; this directory covers each topic in depth.
+[README on GitHub](https://github.com/mschabhuettl/openconnect-saml#readme)
+covers a quick install + the most common flows; this directory
+covers each topic in depth.
 
 ## By topic
 
@@ -35,11 +36,11 @@ flows; this directory covers each topic in depth.
 | What I want to do | See |
 |---|---|
 | Install and run for the first time | [installation.md](installation.md) → [configuration.md#setup-wizard](configuration.md#setup-wizard) |
-| Use a hardware key (Yubikey / Nitrokey) | [authentication.md#fido2--hardware-security-keys](authentication.md#fido2--hardware-security-keys) |
+| Use a hardware key (Yubikey / Nitrokey) | [authentication.md#fido2-hardware-security-keys](authentication.md#fido2-hardware-security-keys) |
 | Connect from a server / container without a display | [browsers.md#headless](browsers.md#headless) |
 | Save multiple VPN configurations | [profiles.md](profiles.md) |
 | Send a profile to the Ubuntu VPN UI | [profiles.md#export-to-networkmanager-nmconnection](profiles.md#export-to-networkmanager-nmconnection) |
-| Block all non-VPN traffic | [networking.md#kill-switch-linux--iptables](networking.md#kill-switch-linux--iptables) |
+| Block all non-VPN traffic | [networking.md#kill-switch](networking.md#kill-switch) |
 | Keep the VPN alive across drops | [operations.md#auto-reconnect](operations.md#auto-reconnect) |
 | Run as a system service | [operations.md#systemd-service](operations.md#systemd-service) |
 | Debug a connection problem | [diagnostics.md](diagnostics.md) |
